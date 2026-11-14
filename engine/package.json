@@ -1,0 +1,13 @@
+{
+  "name": "fantasy-basketball-analyst-engine",
+  "version": "0.1.0",
+  "description": "Category-based fantasy basketball analysis: league baselines, a simulated-league benchmark, and team health checks. Pure functions, no I/O.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "bun test",
+    "build": "bun build src/cli.ts --target=node --outfile=../skill/scripts/analyze.mjs"
+  },
+  "license": "MIT",
+  "private": true
+}
