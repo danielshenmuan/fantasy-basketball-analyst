@@ -199,6 +199,14 @@ function buildBaseline(players, poolSize) {
     }
   };
 }
+var BLEND_K = 40;
+function blendWeight(teamGames, k = BLEND_K) {
+  return Number.isFinite(teamGames) && teamGames > 0 ? teamGames / (teamGames + k) : 0;
+}
+function blendBaselines(last, current, w) {
+  const mix = (a, b) => Object.fromEntries(Object.keys(a).map((k) => [k, (1 - w) * a[k] + w * b[k]]));
+  return { means: mix(last.means, current.means), stds: mix(last.stds, current.stds) };
+}
 
 // src/simulate.ts
 var DEFAULT_PICK_WEIGHTS = [0.45, 0.25, 0.15, 0.1, 0.05];
@@ -306,15 +314,26 @@ function analyze(input, snapshot) {
   check(input);
   const reference = input.reference ?? snapshot.reference_season;
   const { teams, roster_spots } = input.league;
-  const pool = [];
-  for (const p of snapshot.players) {
-    const s = p.seasons.find((x) => x.season === reference);
-    if (s && s.mpg > 0 && s.gp > 0)
-      pool.push({ player_id: p.id, name: p.name, gp: s.gp, mpg: s.mpg, averages: s.averages });
-  }
+  const poolOf = (season) => {
+    const out = [];
+    for (const p of snapshot.players) {
+      const s = p.seasons.find((x) => x.season === season);
+      if (s && s.mpg > 0 && s.gp > 0)
+        out.push({ player_id: p.id, name: p.name, gp: s.gp, mpg: s.mpg, averages: s.averages });
+    }
+    return out;
+  };
+  const pool = poolOf(reference);
   if (pool.length < teams * roster_spots)
     throw new Error(`snapshot has only ${pool.length} players for ${reference}; need at least ${teams * roster_spots}`);
-  const baseline = buildBaseline(pool, teams * roster_spots);
+  let baseline = buildBaseline(pool, teams * roster_spots);
+  const currentSeason = seasonLabel(startYear(reference) + 1);
+  const currentPool = poolOf(currentSeason);
+  const teamGames = input.team_games ?? currentPool.reduce((m, p) => Math.max(m, p.gp), 0);
+  const w = currentPool.length >= teams * roster_spots ? blendWeight(teamGames) : 0;
+  if (w > 0)
+    baseline = blendBaselines(baseline, buildBaseline(currentPool, teams * roster_spots), w);
+  const blendInfo = { reference_season: reference, current_season: w > 0 ? currentSeason : null, team_games: w > 0 ? teamGames : 0, weight_current: w };
   const sim = pool.map((p) => {
     const z = categoryZ(p.averages, baseline);
     return { id: p.player_id, z, total: CATEGORIES.reduce((t, c) => t + z[c], 0) };
@@ -339,6 +358,8 @@ function analyze(input, snapshot) {
     return { name: r.name, status, history: { player_id: null, name: r.name, seasons: [] } };
   });
   const result = assessTeam(roster, baseline, benchmark, { reference });
+  if (w > 0)
+    result.assumptions.push(`League baseline: ${Math.round((1 - w) * 100)}% ${reference}, ${Math.round(w * 100)}% ${currentSeason} (season blend after ${teamGames} games, w = g/(g+40)).`);
   for (const n of names) {
     if (n.status === "ambiguous")
       result.assumptions.push(`"${n.input}" could be more than one player; counted as an average player until clarified.`);
@@ -349,6 +370,7 @@ function analyze(input, snapshot) {
   return {
     ...result,
     snapshot: { generated_at: snapshot.generated_at, reference_season: snapshot.reference_season },
+    baseline: blendInfo,
     league: input.league,
     names,
     ranking
@@ -356,10 +378,18 @@ function analyze(input, snapshot) {
 }
 
 // src/cli.ts
-var USAGE = `Usage: analyze.mjs --snapshot <snapshot.json> [--input <request.json>]
+var USAGE = `Usage: analyze.mjs --snapshot <snapshot.json | https://url> [--input <request.json>]
 Reads a request as JSON from --input or stdin:
   {"league":{"teams":12,"roster_spots":13},"roster":[{"name":"Nikola Jokic"},{"name":"Max Strus","status":"IL"}]}
 Prints the team assessment as JSON.`;
+async function loadSnapshot(src) {
+  if (!src.startsWith("https://"))
+    return JSON.parse(readFileSync(src, "utf8"));
+  const r = await fetch(src, { signal: AbortSignal.timeout(20000) });
+  if (!r.ok)
+    throw new Error(`could not download the snapshot (HTTP ${r.status})`);
+  return await r.json();
+}
 function arg(name) {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
@@ -371,7 +401,7 @@ try {
     const snapPath = arg("--snapshot");
     if (!snapPath)
       throw new Error("missing --snapshot <file>");
-    const snapshot = JSON.parse(readFileSync(snapPath, "utf8"));
+    const snapshot = await loadSnapshot(snapPath);
     const inputPath = arg("--input");
     const input = JSON.parse(readFileSync(inputPath ?? 0, "utf8"));
     console.log(JSON.stringify(analyze(input, snapshot), null, 2));

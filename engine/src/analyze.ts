@@ -1,8 +1,9 @@
 import { assessTeam, type RosterPlayer, type TeamAssessment } from "./assess";
-import { buildBaseline } from "./baseline";
+import { blendBaselines, blendWeight, buildBaseline } from "./baseline";
 import { categoryZ } from "./fantasyValue";
 import { simulateBenchmark, type SimPlayer } from "./simulate";
 import { historyOf, resolvePlayer, type Snapshot } from "./snapshot";
+import { seasonLabel, startYear } from "./history";
 import { CATEGORIES, type Band, type Category, type PlayerSeason } from "./types";
 
 export interface AnalyzeInput {
@@ -10,6 +11,8 @@ export interface AnalyzeInput {
   roster: { name: string; status?: "IL" | "active" }[];
   /** Season for the league baseline; defaults to the snapshot's. */
   reference?: string;
+  /** Team games played this season. Default: the most games any player has played this season. */
+  team_games?: number;
   /** Simulated leagues (default 500). */
   leagues?: number;
   seed?: number;
@@ -22,6 +25,8 @@ export interface NameResult {
 }
 export interface AnalyzeOutput extends TeamAssessment {
   snapshot: { generated_at: string; reference_season: string };
+  /** How the league baseline was built: last season, blended with the season in progress by games played (D1). */
+  baseline: { reference_season: string; current_season: string | null; team_games: number; weight_current: number };
   league: { teams: number; roster_spots: number };
   names: NameResult[];
   /** Plain list for the agent to speak from: strongest to weakest by percentile. */
@@ -41,13 +46,26 @@ export function analyze(input: AnalyzeInput, snapshot: Snapshot): AnalyzeOutput 
   const reference = input.reference ?? snapshot.reference_season;
   const { teams, roster_spots } = input.league;
 
-  const pool: PlayerSeason[] = [];
-  for (const p of snapshot.players) {
-    const s = p.seasons.find((x) => x.season === reference);
-    if (s && s.mpg > 0 && s.gp > 0) pool.push({ player_id: p.id, name: p.name, gp: s.gp, mpg: s.mpg, averages: s.averages });
-  }
+  const poolOf = (season: string): PlayerSeason[] => {
+    const out: PlayerSeason[] = [];
+    for (const p of snapshot.players) {
+      const s = p.seasons.find((x) => x.season === season);
+      if (s && s.mpg > 0 && s.gp > 0) out.push({ player_id: p.id, name: p.name, gp: s.gp, mpg: s.mpg, averages: s.averages });
+    }
+    return out;
+  };
+  const pool = poolOf(reference);
   if (pool.length < teams * roster_spots) throw new Error(`snapshot has only ${pool.length} players for ${reference}; need at least ${teams * roster_spots}`);
-  const baseline = buildBaseline(pool, teams * roster_spots);
+  let baseline = buildBaseline(pool, teams * roster_spots);
+
+  // D1: blend in the season in progress, w = g / (g + 40). The baseline is the only thing blended; players are still
+  // valued from their history (a separate decision), so only the yardstick moves with the season.
+  const currentSeason = seasonLabel(startYear(reference) + 1);
+  const currentPool = poolOf(currentSeason);
+  const teamGames = input.team_games ?? currentPool.reduce((m, p) => Math.max(m, p.gp), 0);
+  const w = currentPool.length >= teams * roster_spots ? blendWeight(teamGames) : 0;
+  if (w > 0) baseline = blendBaselines(baseline, buildBaseline(currentPool, teams * roster_spots), w);
+  const blendInfo = { reference_season: reference, current_season: w > 0 ? currentSeason : null, team_games: w > 0 ? teamGames : 0, weight_current: w };
   const sim: SimPlayer[] = pool.map((p) => {
     const z = categoryZ(p.averages, baseline);
     return { id: p.player_id, z, total: CATEGORIES.reduce((t, c) => t + z[c], 0) };
@@ -72,6 +90,7 @@ export function analyze(input: AnalyzeInput, snapshot: Snapshot): AnalyzeOutput 
   });
 
   const result = assessTeam(roster, baseline, benchmark, { reference });
+  if (w > 0) result.assumptions.push(`League baseline: ${Math.round((1 - w) * 100)}% ${reference}, ${Math.round(w * 100)}% ${currentSeason} (season blend after ${teamGames} games, w = g/(g+40)).`);
   for (const n of names) {
     if (n.status === "ambiguous") result.assumptions.push(`"${n.input}" could be more than one player; counted as an average player until clarified.`);
     if (n.status === "not_found") result.assumptions.push(`"${n.input}" was not found (misspelled, or a rookie not in the data yet); counted as an average player.`);
@@ -81,6 +100,7 @@ export function analyze(input: AnalyzeInput, snapshot: Snapshot): AnalyzeOutput 
   return {
     ...result,
     snapshot: { generated_at: snapshot.generated_at, reference_season: snapshot.reference_season },
+    baseline: blendInfo,
     league: input.league, names, ranking,
   };
 }

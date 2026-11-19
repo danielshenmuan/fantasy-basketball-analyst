@@ -19,7 +19,7 @@ It turns your league's rosters into plain answers: where your team is strong and
 
 ## Data
 
-Player numbers are computed from public box-score statistics and published as a small daily snapshot (season averages and league baselines). Raw game logs are not redistributed.
+Player numbers are computed from public box-score statistics and published nightly as one small file of per-season averages: `https://storage.googleapis.com/fantasy-survivors-analyst-data/snapshot.json`. League baselines are computed from it at run time because they depend on your league size. Raw game logs are not redistributed. A copy is bundled in `skill/data/snapshot.json` as an offline fallback; refresh it with `curl -o skill/data/snapshot.json <the URL above>`.
 
 ## License
 

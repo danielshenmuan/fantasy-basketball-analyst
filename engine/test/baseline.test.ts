@@ -26,3 +26,33 @@ describe("buildBaseline (M2: the rosterable pool) reproduces the independent pan
     expect(() => buildBaseline([], 182)).toThrow();
   });
 });
+
+import { blendBaselines, blendWeight } from "../src/baseline";
+
+describe("season blend (D1: w = g / (g + 40))", () => {
+  test("weight is the share of this season: 0 at opening night, 0.5 at 40 games, about 0.67 at 80", () => {
+    expect(blendWeight(0)).toBe(0);
+    expect(blendWeight(40)).toBeCloseTo(0.5, 10);
+    expect(blendWeight(80)).toBeCloseTo(2 / 3, 10);
+    expect(blendWeight(15)).toBeCloseTo(15 / 55, 10);
+  });
+  test("negative or non-finite games count as zero", () => {
+    expect(blendWeight(-3)).toBe(0);
+    expect(blendWeight(Number.NaN)).toBe(0);
+  });
+  const mk = (v: number): ReturnType<typeof buildBaseline> => ({
+    means: { m_pts: v, m_reb: v, m_ast: v, m_stl: v, m_blk: v, m_fg3m: v, m_fg_pct: v, m_ft_pct: v, m_tov: v },
+    stds: { s_pts: v, s_reb: v, s_ast: v, s_stl: v, s_blk: v, s_fg3m: v, s_tov: v, s_fg_imp: v, s_ft_imp: v },
+  });
+  test("blends every mean and std linearly: (1 - w) x last season + w x this season", () => {
+    const b = blendBaselines(mk(10), mk(20), 0.25);
+    expect(b.means.m_pts).toBeCloseTo(12.5, 10);
+    expect(b.stds.s_fg_imp).toBeCloseTo(12.5, 10);
+    expect(Object.keys(b.means).length).toBe(9);
+    expect(Object.keys(b.stds).length).toBe(9);
+  });
+  test("w = 0 returns last season unchanged, w = 1 returns this season", () => {
+    expect(blendBaselines(mk(10), mk(20), 0)).toEqual(mk(10));
+    expect(blendBaselines(mk(10), mk(20), 1)).toEqual(mk(20));
+  });
+});

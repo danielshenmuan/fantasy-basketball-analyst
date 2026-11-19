@@ -36,3 +36,18 @@ export function buildBaseline(players: PlayerSeason[], poolSize: number): League
     },
   };
 }
+
+/** Games-played constant of the season blend. Approved as D1 (PRD): w = g / (g + 40). */
+export const BLEND_K = 40;
+
+/** Share of THIS season in the baseline after `teamGames` games: 0 on opening night, 0.5 at 40, about 0.67 at 80. */
+export function blendWeight(teamGames: number, k: number = BLEND_K): number {
+  return Number.isFinite(teamGames) && teamGames > 0 ? teamGames / (teamGames + k) : 0;
+}
+
+/** (1 - w) x last season + w x this season, applied to every mean and standard deviation. */
+export function blendBaselines(last: LeagueBaselines, current: LeagueBaselines, w: number): LeagueBaselines {
+  const mix = <T extends Record<string, number>>(a: T, b: T): T =>
+    Object.fromEntries(Object.keys(a).map((k) => [k, (1 - w) * a[k]! + w * b[k]!])) as T;
+  return { means: mix(last.means, current.means), stds: mix(last.stds, current.stds) };
+}
