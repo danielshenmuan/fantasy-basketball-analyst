@@ -86,3 +86,30 @@ describe("analyze: season blend of the league baseline (D1)", () => {
     expect(o.baseline.weight_current).toBeCloseTo(0.5, 10);
   });
 });
+
+describe("analyze: rookies are judged on this season (D10, option C)", () => {
+  const avgs = snapshot.players[0]!.seasons[0]!.averages;
+  const hot = { ...avgs, pts: 28, reb: 9, ast: 8, stl: 2, blk: 1.5, fg3m: 3, turnovers: 2 };
+  const snap: Snapshot = {
+    ...snapshot,
+    players: [
+      ...snapshot.players.map((p) => ({ ...p, seasons: [{ season: "2026-27", gp: 15, mpg: p.seasons[0]!.mpg, averages: p.seasons[0]!.averages }, ...p.seasons] })),
+      { id: -999, name: "Hot Rookie", seasons: [{ season: "2026-27", gp: 12, mpg: 33, averages: hot }] },
+    ],
+  };
+  const withRookie = analyze({ league, roster: [{ name: "Hot Rookie" }] }, snap);
+  test("the rookie is no longer counted as an average player", () => {
+    const p = withRookie.players[0]!;
+    expect(p.confidence).toBe("low");
+    expect(p.seasonsUsed).toEqual(["2026-27"]);
+    expect(p.note).toContain("this season");
+    expect(withRookie.assumptions.some((a) => a.includes("no NBA data"))).toBe(false);
+  });
+  test("a star line moves the roster's scoring above an average player's", () => {
+    const avgRoster = analyze({ league, roster: [{ name: "Not A Player" }] }, snap);
+    expect(withRookie.categories.PTS.total).toBeGreaterThan(avgRoster.categories.PTS.total);
+  });
+  test("the result says plainly that some players are judged on this season only", () => {
+    expect(withRookie.assumptions.some((a) => a.includes("this season only"))).toBe(true);
+  });
+});

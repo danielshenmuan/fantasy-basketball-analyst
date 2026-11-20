@@ -50,3 +50,36 @@ describe("estimateAverages (weighted history, D7)", () => {
     expect(CONFIDENCE_MIN.high).toBe(100); expect(RECENCY_WEIGHTS).toEqual([1, 0.6, 0.3]);
   });
 });
+
+describe("this season for players with no completed-season history (D10, option C)", () => {
+  const CUR = "2026-27";
+  const rookie = (gp: number, pts = 18): PlayerHistory => ({ player_id: -1, name: "R", seasons: [season(CUR, gp, pts)] });
+  test("a player with no history is estimated from this season, labelled as such, at low confidence", () => {
+    const e = estimateAverages(rookie(15), REF, { current: CUR });
+    expect(e.averages!.pts).toBe(18);
+    expect(e.seasonsUsed).toEqual([CUR]);
+    expect(e.effectiveGames).toBe(15);
+    expect(e.confidence).toBe("low");
+    expect(e.currentSeasonOnly).toBe(true);
+  });
+  test("confidence follows the same thresholds as everywhere else (50 effective games = medium)", () => {
+    expect(estimateAverages(rookie(60), REF, { current: CUR }).confidence).toBe("medium");
+  });
+  test("games are capped like any other season", () => {
+    expect(estimateAverages(rookie(80), REF, { current: CUR }).effectiveGames).toBe(GAMES_CAP);
+  });
+  test("a player WITH history is unchanged: this season is ignored (that is what C means)", () => {
+    const h: PlayerHistory = { player_id: 5, name: "V", seasons: [season(CUR, 15, 40), season("2025-26", 70, 20)] };
+    const withCur = estimateAverages(h, REF, { current: CUR }), without = estimateAverages(h, REF);
+    expect(withCur).toEqual(without);
+    expect(withCur.averages!.pts).toBe(20);
+    expect(withCur.currentSeasonOnly).toBeFalsy();
+  });
+  test("fewer than 5 games is not enough to judge a player (one big night is not a role)", () => {
+    const e = estimateAverages(rookie(4, 40), REF, { current: CUR });
+    expect(e.averages).toBeNull(); expect(e.confidence).toBe("none");
+  });
+  test("without the option nothing changes: a rookie is still 'no data'", () => {
+    expect(estimateAverages(rookie(15), REF).averages).toBeNull();
+  });
+});

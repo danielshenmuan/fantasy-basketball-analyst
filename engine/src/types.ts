@@ -94,6 +94,8 @@ export interface Estimate {
   /** The weighted number of games behind the estimate. */
   effectiveGames: number;
   seasonsUsed: string[];
+  /** True when the player has no completed-season history and the estimate comes from this season alone (D10, option C). */
+  currentSeasonOnly?: boolean;
 }
 export interface LeagueSettings {
   teams: number;

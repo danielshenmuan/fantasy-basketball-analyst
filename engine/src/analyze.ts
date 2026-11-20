@@ -89,7 +89,7 @@ export function analyze(input: AnalyzeInput, snapshot: Snapshot): AnalyzeOutput 
     return { name: r.name, status, history: { player_id: null, name: r.name, seasons: [] } };
   });
 
-  const result = assessTeam(roster, baseline, benchmark, { reference });
+  const result = assessTeam(roster, baseline, benchmark, { reference, current: currentPool.length > 0 ? currentSeason : undefined });
   if (w > 0) result.assumptions.push(`League baseline: ${Math.round((1 - w) * 100)}% ${reference}, ${Math.round(w * 100)}% ${currentSeason} (season blend after ${teamGames} games, w = g/(g+40)).`);
   for (const n of names) {
     if (n.status === "ambiguous") result.assumptions.push(`"${n.input}" could be more than one player; counted as an average player until clarified.`);

@@ -29,6 +29,7 @@ function categoryZ(a, b) {
 // src/history.ts
 var RECENCY_WEIGHTS = [1, 0.6, 0.3];
 var GAMES_CAP = 65;
+var CURRENT_MIN_GAMES = 5;
 var CONFIDENCE_MIN = { high: 100, medium: 50 };
 var FIELDS = [
   "pts",
@@ -67,8 +68,15 @@ function estimateAverages(h, reference, opts = {}) {
     wSum += w;
     used.push(label);
   });
-  if (wSum === 0)
+  if (wSum === 0) {
+    const cur = opts.current ? h.seasons.find((x) => x.season === opts.current) : undefined;
+    if (cur && cur.gp >= CURRENT_MIN_GAMES) {
+      const games = Math.min(cur.gp, cap);
+      const confidence2 = games >= CONFIDENCE_MIN.high ? "high" : games >= CONFIDENCE_MIN.medium ? "medium" : "low";
+      return { averages: { ...cur.averages }, confidence: confidence2, effectiveGames: games, seasonsUsed: [cur.season], currentSeasonOnly: true };
+    }
     return { averages: null, confidence: "none", effectiveGames: 0, seasonsUsed: [] };
+  }
   const averages = Object.fromEntries(FIELDS.map((f) => [f, acc[f] / wSum]));
   const confidence = wSum >= CONFIDENCE_MIN.high ? "high" : wSum >= CONFIDENCE_MIN.medium ? "medium" : "low";
   return { averages, confidence, effectiveGames: wSum, seasonsUsed: used };
@@ -103,7 +111,7 @@ function assessTeam(roster, baseline, benchmark, opts) {
   const spots = benchmark.settings.rosterSpots;
   const zero = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
   const rows = roster.map((r) => {
-    const est = estimateAverages(r.history, opts.reference);
+    const est = estimateAverages(r.history, opts.reference, { current: opts.current });
     const z = est.averages ? categoryZ(est.averages, baseline) : null;
     const status = r.status ?? "active";
     const value = z ? CATEGORIES.reduce((s, c) => s + z[c], 0) : CATEGORIES.reduce((s, c) => s + benchmark.poolMean[c], 0);
@@ -120,6 +128,8 @@ function assessTeam(roster, baseline, benchmark, opts) {
       note = "More players than roster spots: not counted.";
     else if (x.est.confidence === "none")
       note = "No NBA data (rookie or no recent games): counted as an average rostered player.";
+    else if (x.est.currentSeasonOnly)
+      note = `No completed NBA seasons: judged on this season only (${x.est.effectiveGames.toFixed(0)} games, ${x.est.seasonsUsed[0]}). Small sample, treat with care.`;
     else if (x.est.confidence === "low")
       note = `Small sample (${x.est.effectiveGames.toFixed(0)} effective games): treat with care.`;
     else if (!x.est.seasonsUsed.includes(opts.reference))
@@ -145,6 +155,9 @@ function assessTeam(roster, baseline, benchmark, opts) {
       sums[c] += benchmark.poolMean[c];
   if (empty > 0)
     assumptions.push(`${empty} empty roster slot(s) counted as an average rostered player.`);
+  const currentOnly = players.filter((p) => p.counted && rows.find((x) => x.r.name === p.name)?.est.currentSeasonOnly).length;
+  if (currentOnly > 0)
+    assumptions.push(`${currentOnly} player(s) with no completed NBA seasons are judged on this season only; small samples can swing.`);
   const noData = players.filter((p) => p.counted && p.confidence === "none").length;
   if (noData > 0)
     assumptions.push(`${noData} player(s) with no NBA data counted as an average rostered player.`);
@@ -357,7 +370,7 @@ function analyze(input, snapshot) {
       names.push({ input: r.name, status: "not_found" });
     return { name: r.name, status, history: { player_id: null, name: r.name, seasons: [] } };
   });
-  const result = assessTeam(roster, baseline, benchmark, { reference });
+  const result = assessTeam(roster, baseline, benchmark, { reference, current: currentPool.length > 0 ? currentSeason : undefined });
   if (w > 0)
     result.assumptions.push(`League baseline: ${Math.round((1 - w) * 100)}% ${reference}, ${Math.round(w * 100)}% ${currentSeason} (season blend after ${teamGames} games, w = g/(g+40)).`);
   for (const n of names) {

@@ -7,6 +7,8 @@ import type { Confidence, Estimate, PlayerHistory, SeasonAverages } from "./type
 export const RECENCY_WEIGHTS: readonly number[] = [1.0, 0.6, 0.3];
 /** One season can contribute at most this many games, so a single full year cannot swamp the others. */
 export const GAMES_CAP = 65;
+/** A player with no history needs at least this many games this season before it is used (my default, unreviewed). */
+export const CURRENT_MIN_GAMES = 5;
 /** Effective games needed for each confidence level. Defaults chosen here; open to adjustment. */
 export const CONFIDENCE_MIN = { high: 100, medium: 50 } as const;
 
@@ -31,7 +33,7 @@ export function startYear(season: string): number {
 export function estimateAverages(
   h: PlayerHistory,
   reference: string,
-  opts: { recency?: readonly number[]; gamesCap?: number } = {},
+  opts: { recency?: readonly number[]; gamesCap?: number; current?: string } = {},
 ): Estimate {
   const recency = opts.recency ?? RECENCY_WEIGHTS;
   const cap = opts.gamesCap ?? GAMES_CAP;
@@ -48,7 +50,16 @@ export function estimateAverages(
     wSum += w;
     used.push(label);
   });
-  if (wSum === 0) return { averages: null, confidence: "none", effectiveGames: 0, seasonsUsed: [] };
+  if (wSum === 0) {
+    // D10 option C: only a player with NO completed-season history is judged on this season, at full weight for his games.
+    const cur = opts.current ? h.seasons.find((x) => x.season === opts.current) : undefined;
+    if (cur && cur.gp >= CURRENT_MIN_GAMES) {
+      const games = Math.min(cur.gp, cap);
+      const confidence: Confidence = games >= CONFIDENCE_MIN.high ? "high" : games >= CONFIDENCE_MIN.medium ? "medium" : "low";
+      return { averages: { ...cur.averages }, confidence, effectiveGames: games, seasonsUsed: [cur.season], currentSeasonOnly: true };
+    }
+    return { averages: null, confidence: "none", effectiveGames: 0, seasonsUsed: [] };
+  }
   const averages = Object.fromEntries(FIELDS.map((f) => [f, acc[f] / wSum])) as unknown as SeasonAverages;
   const confidence: Confidence = wSum >= CONFIDENCE_MIN.high ? "high" : wSum >= CONFIDENCE_MIN.medium ? "medium" : "low";
   return { averages, confidence, effectiveGames: wSum, seasonsUsed: used };

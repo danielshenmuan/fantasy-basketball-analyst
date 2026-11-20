@@ -37,7 +37,7 @@ If the script cannot run at all (no Node, no file access), tell the user the ana
 - `ranking`: the nine categories from strongest to weakest, each with a band and a percentile.
 - Bands compare the team with simulated leagues of the same size: **elite** (top 15%), **strong**, **neutral**, **weak** (bottom 40%).
 - `names`: how each typed name was read. For any `ambiguous` or `not_found` entry, **ask the user** which player they meant. Do not guess. Until clarified, that player counts as an average player.
-- `players`: each player's confidence. `none` means no NBA data (usually a rookie), `low` means a small sample, and a player who missed last season is estimated from earlier seasons. Mention these when they affect the answer.
+- `players`: each player's confidence. `none` means no usable NBA data, `low` means a small sample, and a player who missed last season is estimated from earlier seasons. A rookie, or anyone with no completed NBA season, is judged on this season's games alone (see the note on that player) and is always `low` until about 50 games. Mention these when they affect the answer.
 - `baseline`: what the "average rostered player" yardstick is built from. Early in a season it blends last season with this one (`weight_current` is this season's share, which grows with games played). Mention it only if the user asks why numbers moved.
 - `assumptions`: the plain-language list of what the result rests on. Include the important ones in your answer.
 
@@ -51,8 +51,8 @@ If the script cannot run at all (no Node, no file access), tell the user the ana
 
 ## Known limits (say so when they apply)
 
-- **Rookies and players with no recent NBA seasons** show confidence `none` and count as an average player, even if they are playing well this season. If the roster has one, say that the team may be stronger or weaker than shown.
-- Players are valued from their last three completed seasons, not from this season's games.
+- **Players are valued from their last three completed seasons, not from this season's games.** The one exception is a player with no completed season (a rookie): he is judged on this season's games, which can swing a lot early on. A player with fewer than 5 games this season and no history counts as an average player (`none`). If the roster has a rookie or a returning player, say the number is less certain.
+- A veteran who is playing far above or below his past seasons is not adjusted for it.
 - Positions, injuries to starters, schedules and daily lineup limits are not modelled.
 
 ## Data
