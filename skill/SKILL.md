@@ -17,7 +17,7 @@ Scope today: **9-category leagues** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO)
 
 Read these from the user's league yourself if you can browse it while they are logged in (roster page and league settings). Otherwise ask them to paste the roster. Never ask for a password or log in on their behalf.
 
-**Before running anything, show the user the players you read and the league size, and ask them to confirm.** Misread names are the most likely source of a wrong answer.
+**Before running anything, show the user the players you read and the league size, and ask them to confirm.** Misread names are the most likely source of a wrong answer. Also confirm the scoring is the standard nine categories, and if fewer players are active than roster spots, ask whether someone is missing: an empty slot counts as an average player and flatters or hurts the picture.
 
 ## Run the analysis
 
@@ -34,7 +34,7 @@ If the script cannot run at all (no Node, no file access), tell the user the ana
 
 ## Read the result
 
-- `ranking`: the nine categories from strongest to weakest, each with a band and a percentile.
+- `ranking`: the nine categories from strongest to weakest, each with a band and a rounded percentile. Quote these, not the unrounded numbers elsewhere in the output.
 - Bands compare the team with simulated leagues of the same size: **elite** (top 15%), **strong**, **neutral**, **weak** (bottom 40%).
 - `names`: how each typed name was read. For any `ambiguous` or `not_found` entry, **ask the user** which player they meant. Do not guess. Until clarified, that player counts as an average player.
 - `players`: each player's confidence. `none` means no usable NBA data, `low` means a small sample, and a player who missed last season is estimated from earlier seasons. A rookie, or anyone with no completed NBA season, is judged on this season's games alone (see the note on that player) and is always `low` until about 50 games. Mention these when they affect the answer.
@@ -43,7 +43,9 @@ If the script cannot run at all (no Node, no file access), tell the user the ana
 
 ## How to talk about it
 
-- Lead with the picture: which categories are strengths, which are holes, and which hole is the cheapest to fix. Turnovers (TO) and FG% are usually the hardest to move.
+- To say which players drive a category, you may use each player's per-category values in `players` to rank them, but describe it in words ("Jokic and Sengun carry your rebounds"). Never quote those numbers.
+- Lead with the picture: which categories are strengths, which are holes, and which hole looks cheapest to fix. The script does not measure how cheap a fix is, so that part is your judgment and you should say so. Turnovers (TO) and FG% are usually the hardest to move.
+- Do not tell the user to punt (give up) a category as if the analysis found it. Punt detection is not built. You may mention punting as your own judgment, and label it that way.
 - Use the bands and plain stats. Do not mention z-scores or an internal score.
 - Be honest that this is an estimate from past seasons: it does not model injuries, role changes, schedules, or daily lineup limits.
 - Suggestions for pickups and trades should come from the user's own league data (free agents, other rosters) that you read, aimed at the weak categories. Say which suggestions come from the analysis and which are your own judgment.
