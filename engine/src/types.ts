@@ -17,6 +17,13 @@ export interface SeasonAverages {
   fga: number;
   /** Average free-throw attempts per game: the "volume" behind FT%. */
   fta: number;
+  /**
+   * Average made field goals and made free throws per game (snapshot additions, optional so older files still load).
+   * A team's FG% / FT% is made / attempted; fg_pct / ft_pct (mean of per-game percentages) understate players with
+   * games without attempts. Used by the matchup simulation.
+   */
+  fgm?: number;
+  ftm?: number;
 }
 
 /** League means and standard deviations for one season (a row of nba_data.league_pg_stats_by_season). */

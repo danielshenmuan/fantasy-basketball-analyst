@@ -15,6 +15,8 @@ export const CONFIDENCE_MIN = { high: 100, medium: 50 } as const;
 const FIELDS: (keyof SeasonAverages)[] = [
   "pts", "reb", "ast", "stl", "blk", "fg3m", "fg_pct", "ft_pct", "turnovers", "fga", "fta",
 ];
+/** Made shots: blended the same way, but only from seasons that have them (older snapshots do not). */
+const MADE = ["fgm", "ftm"] as const;
 
 export function seasonLabel(startYear: number): string {
   return `${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
@@ -40,6 +42,7 @@ export function estimateAverages(
   const ref = startYear(reference);
   const acc = Object.fromEntries(FIELDS.map((f) => [f, 0])) as Record<keyof SeasonAverages, number>;
   let wSum = 0;
+  const made: Record<(typeof MADE)[number], { acc: number; w: number }> = { fgm: { acc: 0, w: 0 }, ftm: { acc: 0, w: 0 } };
   const used: string[] = [];
   recency.forEach((r, back) => {
     const label = seasonLabel(ref - back);
@@ -47,6 +50,10 @@ export function estimateAverages(
     if (!s || !(s.gp > 0)) return;
     const w = r * Math.min(s.gp, cap);
     for (const f of FIELDS) acc[f] += w * s.averages[f];
+    for (const f of MADE) {
+      const v = s.averages[f];
+      if (typeof v === "number") { made[f].acc += w * v; made[f].w += w; }
+    }
     wSum += w;
     used.push(label);
   });
@@ -61,6 +68,7 @@ export function estimateAverages(
     return { averages: null, confidence: "none", effectiveGames: 0, seasonsUsed: [] };
   }
   const averages = Object.fromEntries(FIELDS.map((f) => [f, acc[f] / wSum])) as unknown as SeasonAverages;
+  for (const f of MADE) if (made[f].w > 0) averages[f] = made[f].acc / made[f].w;
   const confidence: Confidence = wSum >= CONFIDENCE_MIN.high ? "high" : wSum >= CONFIDENCE_MIN.medium ? "medium" : "low";
   return { averages, confidence, effectiveGames: wSum, seasonsUsed: used };
 }

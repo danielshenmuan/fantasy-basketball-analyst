@@ -10,12 +10,20 @@ export interface Snapshot {
   /** Season used for the league baseline, e.g. "2025-26". */
   reference_season: string;
   players: SnapshotPlayer[];
+  /** Games per team per fantasy week (Monday-Sunday), from the public NBA schedule. Absent in older files. */
+  schedule?: SnapshotSchedule;
+}
+export interface SnapshotSchedule {
+  source: string;
+  weeks: { start: string; games: Record<string, number> }[];
 }
 export interface SnapshotPlayer {
   id: number;
   name: string;
   /** Nicknames and short forms, e.g. "KPJ", "Dame". */
   aliases?: string[];
+  /** Current team abbreviation (e.g. "HOU"), used to count games from the schedule. */
+  team?: string;
   seasons: SeasonLine[];
 }
 

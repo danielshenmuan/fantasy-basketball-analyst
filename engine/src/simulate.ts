@@ -27,7 +27,7 @@ export interface Benchmark {
 }
 
 /** Small seedable PRNG so a benchmark is reproducible. */
-function mulberry32(seed: number): () => number {
+export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -38,7 +38,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-function pickIndex(n: number, weights: number[], rand: () => number): number {
+export function pickIndex(n: number, weights: number[], rand: () => number): number {
   const k = Math.min(n, weights.length);
   let total = 0;
   for (let i = 0; i < k; i++) total += weights[i]!;

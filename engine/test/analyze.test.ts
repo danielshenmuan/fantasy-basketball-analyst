@@ -113,3 +113,54 @@ describe("analyze: rookies are judged on this season (D10, option C)", () => {
     expect(withRookie.assumptions.some((a) => a.includes("this season only"))).toBe(true);
   });
 });
+
+describe("analyze: weekly matchup simulation (D12)", () => {
+  const teamOf = ["HOU", "BOS", "DEN"];
+  const withTeams = (games: Record<string, number> | null): Snapshot => ({
+    ...snapshot,
+    generated_at: "2026-11-24T06:00:00Z", // a Tuesday: the week starts Monday 2026-11-23
+    players: snapshot.players.map((p, i) => ({ ...p, team: teamOf[i % 3] })),
+    ...(games ? { schedule: { source: "test", weeks: [{ start: "2026-11-23", games }] } } : {}),
+  });
+  const base = { league, roster: roster.map((name) => ({ name })), matchup: { lineup_slots: 8, weeks: 2000 } };
+
+  test("is absent unless asked for", () => {
+    expect(analyze({ league, roster: base.roster }, snapshot).matchup).toBeUndefined();
+  });
+  test("without a schedule it assumes an average week and says so", () => {
+    const m = analyze(base, snapshot).matchup!;
+    expect(m.games_source).toBe("assumed");
+    expect(m.week_start).toBeNull();
+    expect(m.assumptions[0]).toContain("average week");
+  });
+  test("with a schedule it counts the real games", () => {
+    const m = analyze(base, withTeams({ HOU: 3, BOS: 3, DEN: 3 })).matchup!;
+    expect(m.games_source).toBe("schedule");
+    expect(m.week_start).toBe("2026-11-23");
+  });
+  test("a player on a team with more games that week raises your chances", () => {
+    const even = analyze(base, withTeams({ HOU: 3, BOS: 3, DEN: 3 })).matchup!;
+    const heavy = analyze(base, withTeams({ HOU: 4, BOS: 4, DEN: 4 })).matchup!;
+    // everyone, opponents included, plays 4: the team keeps its relative standing, so the answer barely moves
+    expect(Math.abs(heavy.week_win_pct - even.week_win_pct)).toBeLessThan(12);
+  });
+  test("is reproducible and reports whole percents", () => {
+    const a = analyze(base, withTeams({ HOU: 3, BOS: 3, DEN: 3 })).matchup!;
+    const b = analyze(base, withTeams({ HOU: 3, BOS: 3, DEN: 3 })).matchup!;
+    expect(a).toEqual(b);
+    expect(Number.isInteger(a.week_win_pct)).toBe(true);
+    expect(Object.keys(a.categories).sort()).toEqual([...CATEGORIES].sort());
+    expect(a.distribution_pct.length).toBe(10);
+  });
+  test("a real opponent: a roster beats a weaker one", () => {
+    const strong = ["James Harden", "Jayson Tatum", "Josh Giddey", "Darius Garland", "Onyeka Okongwu", "Herb Jones", "Kevin Porter Jr.", "Quentin Grimes"];
+    const weak = ["Gui Santos"];
+    const m = analyze({ ...base, roster: strong.map((name) => ({ name })), matchup: { ...base.matchup, opponent: weak.map((name) => ({ name })) } }, snapshot).matchup!;
+    expect(m.opponent).toBe("roster");
+    expect(m.week_win_pct).toBeGreaterThan(90);
+  });
+  test("IL players and unmatched names are not counted, and the output says so", () => {
+    const m = analyze({ ...base, roster: [...base.roster, { name: "Nobody Atall" }, { name: "Jayson Tatum", status: "IL" }] }, snapshot).matchup!;
+    expect(m.assumptions.some((a) => a.includes("could not be matched"))).toBe(true);
+  });
+});

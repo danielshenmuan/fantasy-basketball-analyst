@@ -8,8 +8,8 @@ It turns your league's rosters into plain answers: where your team is strong and
 
 ## Layout
 
-- `engine/`: TypeScript engine (league baselines, simulated-league benchmark, team assessment) with tests. `bun test` runs them; `bun run build` writes the single-file script below.
-- `skill/`: the agent skill. `SKILL.md` is the playbook; `scripts/analyze.mjs` is the engine bundled into one dependency-free file that runs on Node.
+- `engine/`: TypeScript engine (league baselines, simulated-league benchmark, team assessment) with tests. `bun test` runs them; `bun run build` writes the single-file script below. It also holds the weekly head-to-head matchup simulation (not yet exposed in a skill).
+- `skills/`: the agent skills, packaged as one Claude plugin (`.claude-plugin/`). `setup` reads a league and saves a league card; `team-check` is the category health check (`scripts/analyze.mjs` is the engine bundled into one dependency-free file that runs on Node). More skills (matchup, waiver, trade) follow.
 
 ## What it will do
 
@@ -19,7 +19,7 @@ It turns your league's rosters into plain answers: where your team is strong and
 
 ## Data
 
-Player numbers are computed from public box-score statistics and published nightly as one small file of per-season averages: `https://storage.googleapis.com/fantasy-survivors-analyst-data/snapshot.json`. League baselines are computed from it at run time because they depend on your league size. Raw game logs are not redistributed. A copy is bundled in `skill/data/snapshot.json` as an offline fallback; refresh it with `curl -o skill/data/snapshot.json <the URL above>`.
+Player numbers are computed from public box-score statistics and published nightly as one small file of per-season averages: `https://storage.googleapis.com/fantasy-survivors-analyst-data/snapshot.json`. League baselines are computed from it at run time because they depend on your league size. Raw game logs are not redistributed. A copy is bundled in `skills/team-check/data/snapshot.json` as an offline fallback; refresh it with `curl -o skills/team-check/data/snapshot.json <the URL above>`.
 
 ## License
 

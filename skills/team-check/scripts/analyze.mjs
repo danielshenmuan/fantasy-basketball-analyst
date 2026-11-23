@@ -44,6 +44,7 @@ var FIELDS = [
   "fga",
   "fta"
 ];
+var MADE = ["fgm", "ftm"];
 function seasonLabel(startYear) {
   return `${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
 }
@@ -56,6 +57,7 @@ function estimateAverages(h, reference, opts = {}) {
   const ref = startYear(reference);
   const acc = Object.fromEntries(FIELDS.map((f) => [f, 0]));
   let wSum = 0;
+  const made = { fgm: { acc: 0, w: 0 }, ftm: { acc: 0, w: 0 } };
   const used = [];
   recency.forEach((r, back) => {
     const label = seasonLabel(ref - back);
@@ -65,6 +67,13 @@ function estimateAverages(h, reference, opts = {}) {
     const w = r * Math.min(s.gp, cap);
     for (const f of FIELDS)
       acc[f] += w * s.averages[f];
+    for (const f of MADE) {
+      const v = s.averages[f];
+      if (typeof v === "number") {
+        made[f].acc += w * v;
+        made[f].w += w;
+      }
+    }
     wSum += w;
     used.push(label);
   });
@@ -78,6 +87,9 @@ function estimateAverages(h, reference, opts = {}) {
     return { averages: null, confidence: "none", effectiveGames: 0, seasonsUsed: [] };
   }
   const averages = Object.fromEntries(FIELDS.map((f) => [f, acc[f] / wSum]));
+  for (const f of MADE)
+    if (made[f].w > 0)
+      averages[f] = made[f].acc / made[f].w;
   const confidence = wSum >= CONFIDENCE_MIN.high ? "high" : wSum >= CONFIDENCE_MIN.medium ? "medium" : "low";
   return { averages, confidence, effectiveGames: wSum, seasonsUsed: used };
 }
@@ -311,6 +323,154 @@ function historyOf(p) {
   return { player_id: p.id, name: p.name, seasons: p.seasons };
 }
 
+// src/matchup.ts
+var DEFAULT_WEEK_GAMES = 3.4;
+var DEFAULT_WEEKS = 1e4;
+var WEEKLY_LUCK = { pts: 0.08, reb: 0.09, ast: 0.11, stl: 0.17, blk: 0.23, fg3m: 0.14, tov: 0.13 };
+var WEEKLY_LUCK_PCT = { fg: 0.024, ft: 0.041 };
+var LUCK_CORRELATION = [
+  [1, 0.29, 0.2, 0.1, 0.11, 0.63, 0.14],
+  [0.29, 1, 0.24, 0.1, 0.17, 0.11, 0.18],
+  [0.2, 0.24, 1, 0.08, 0.1, 0.12, 0.1],
+  [0.1, 0.1, 0.08, 1, 0.07, 0.03, 0.1],
+  [0.11, 0.17, 0.1, 0.07, 1, 0.05, 0.02],
+  [0.63, 0.11, 0.12, 0.03, 0.05, 1, 0.08],
+  [0.14, 0.18, 0.1, 0.1, 0.02, 0.08, 1]
+];
+var COUNT_KEYS = ["pts", "reb", "ast", "stl", "blk", "fg3m", "tov"];
+function cholesky(m) {
+  const n = m.length;
+  const L = Array.from({ length: n }, () => Array(n).fill(0));
+  for (let i = 0;i < n; i++)
+    for (let j = 0;j <= i; j++) {
+      let s = m[i][j];
+      for (let k = 0;k < j; k++)
+        s -= L[i][k] * L[j][k];
+      if (i === j) {
+        if (s <= 0)
+          throw new Error("LUCK_CORRELATION is not positive definite");
+        L[i][j] = Math.sqrt(s);
+      } else
+        L[i][j] = s / L[j][j];
+    }
+  return L;
+}
+var LUCK_L = cholesky(LUCK_CORRELATION);
+function weeklyTotals(players, slots) {
+  const lineup = [...players].sort((a, b) => b.value - a.value).slice(0, slots);
+  const t = { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, fg3m: 0, tov: 0, fgm: 0, fga: 0, ftm: 0, fta: 0 };
+  for (const p of lineup) {
+    const { averages: a, games: g } = p;
+    t.pts += a.pts * g;
+    t.reb += a.reb * g;
+    t.ast += a.ast * g;
+    t.stl += a.stl * g;
+    t.blk += a.blk * g;
+    t.fg3m += a.fg3m * g;
+    t.tov += a.turnovers * g;
+    t.fgm += (a.fgm ?? a.fga * a.fg_pct) * g;
+    t.fga += a.fga * g;
+    t.ftm += (a.ftm ?? a.fta * a.ft_pct) * g;
+    t.fta += a.fta * g;
+  }
+  return t;
+}
+function gaussian(rand) {
+  let spare = null;
+  return () => {
+    if (spare !== null) {
+      const s = spare;
+      spare = null;
+      return s;
+    }
+    let u = 0;
+    while (u === 0)
+      u = rand();
+    const v = rand(), r = Math.sqrt(-2 * Math.log(u));
+    spare = r * Math.sin(2 * Math.PI * v);
+    return r * Math.cos(2 * Math.PI * v);
+  };
+}
+function outcome(t, luck, g) {
+  const cnt = COUNT_KEYS.map((k) => t[k]);
+  let fg = t.fga > 0 ? t.fgm / t.fga : 0, ft = t.fta > 0 ? t.ftm / t.fta : 0;
+  if (luck) {
+    const z = COUNT_KEYS.map(() => g());
+    COUNT_KEYS.forEach((k, i) => {
+      const c = LUCK_L[i].reduce((s, v, j) => s + v * z[j], 0);
+      cnt[i] = Math.max(0, cnt[i] * (1 + WEEKLY_LUCK[k] * c));
+    });
+    fg = Math.min(1, Math.max(0, fg + WEEKLY_LUCK_PCT.fg * g()));
+    ft = Math.min(1, Math.max(0, ft + WEEKLY_LUCK_PCT.ft * g()));
+  }
+  return { cnt, fg, ft };
+}
+var CAT_ORDER = ["PTS", "REB", "AST", "STL", "BLK", "3PM", "TO", "FG%", "FT%"];
+function simulateWeeks(me, opponents, opts = {}) {
+  if (opponents.length === 0)
+    throw new Error("simulateWeeks: no opponents");
+  const weeks = opts.weeks ?? DEFAULT_WEEKS;
+  const luck = opts.luck ?? true;
+  const rand = mulberry32(opts.seed ?? 1);
+  const g = gaussian(rand);
+  const wins = Array(9).fill(0);
+  const dist = Array(10).fill(0);
+  let weekWins = 0;
+  for (let w = 0;w < weeks; w++) {
+    const opp = opponents[opponents.length === 1 ? 0 : Math.floor(rand() * opponents.length)];
+    const a = outcome(me, luck, g), b = outcome(opp, luck, g);
+    let won = 0;
+    for (let i = 0;i < 7; i++) {
+      const isTO = i === 6;
+      if (isTO ? a.cnt[i] < b.cnt[i] : a.cnt[i] > b.cnt[i]) {
+        wins[i]++;
+        won++;
+      }
+    }
+    if (a.fg > b.fg) {
+      wins[7]++;
+      won++;
+    }
+    if (a.ft > b.ft) {
+      wins[8]++;
+      won++;
+    }
+    dist[won]++;
+    if (won >= 5)
+      weekWins++;
+  }
+  const categories = Object.fromEntries(CAT_ORDER.map((c, i) => [c, wins[i] / weeks]));
+  return { weeks, categories, weekWin: weekWins / weeks, distribution: dist.map((x) => x / weeks) };
+}
+function typicalOpponents(players, settings, slots, gamesFor, opts = {}) {
+  const { teams, rosterSpots } = settings;
+  const poolSize = teams * rosterSpots;
+  const pool = [...players].sort((a, b) => b.value - a.value).slice(0, poolSize);
+  if (pool.length < poolSize)
+    throw new Error(`typicalOpponents: need ${poolSize} players, got ${pool.length}`);
+  const rand = mulberry32((opts.seed ?? 1) + 7919);
+  const weights = opts.pickWeights ?? DEFAULT_PICK_WEIGHTS;
+  const out = [];
+  for (let l = 0;l < (opts.leagues ?? 300); l++) {
+    const remaining = pool.slice();
+    const rosters = Array.from({ length: teams }, () => []);
+    for (let round = 0;round < rosterSpots; round++)
+      for (let k = 0;k < teams; k++) {
+        const t = round % 2 === 0 ? k : teams - 1 - k;
+        rosters[t].push(remaining.splice(pickIndex(remaining.length, weights, rand), 1)[0]);
+      }
+    for (const r of rosters)
+      out.push(weeklyTotals(r.map((p) => ({ averages: p.averages, games: gamesFor(p.team), value: p.value })), slots));
+  }
+  return out;
+}
+function mondayOf(isoDate) {
+  const d = new Date(isoDate.slice(0, 10) + "T00:00:00Z");
+  const back = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - back);
+  return d.toISOString().slice(0, 10);
+}
+
 // src/analyze.ts
 function check(input) {
   const { teams, roster_spots } = input.league ?? {};
@@ -380,13 +540,84 @@ function analyze(input, snapshot) {
       result.assumptions.push(`"${n.input}" was not found (misspelled, or a rookie not in the data yet); counted as an average player.`);
   }
   const ranking = CATEGORIES.map((c) => ({ category: c, band: result.categories[c].band, percentile: Math.round(result.categories[c].percentile) })).sort((a, b) => b.percentile - a.percentile);
+  const matchup = input.matchup ? runMatchup(input, snapshot, reference, currentSeason, baseline, names) : undefined;
   return {
     ...result,
     snapshot: { generated_at: snapshot.generated_at, reference_season: snapshot.reference_season },
     baseline: blendInfo,
     league: input.league,
     names,
-    ranking
+    ranking,
+    ...matchup ? { matchup } : {}
+  };
+}
+function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNames) {
+  const m = input.matchup;
+  const { teams, roster_spots } = input.league;
+  const slots = m.lineup_slots ?? roster_spots;
+  if (!Number.isInteger(slots) || slots < 1 || slots > 20)
+    throw new Error("matchup.lineup_slots must be a whole number from 1 to 20");
+  const assumptions = [];
+  const weekStart = m.week_start ?? mondayOf(snapshot.generated_at);
+  const week = snapshot.schedule?.weeks.find((w) => w.start === weekStart);
+  const gamesFor = (team) => week && team ? week.games[team] ?? 0 : DEFAULT_WEEK_GAMES;
+  const fromSchedule = Boolean(week);
+  assumptions.push(fromSchedule ? `Games per player come from the NBA schedule for the week of ${weekStart}. Injuries and rest days are not modelled.` : `No schedule for the week of ${weekStart} in the data, so every player gets an average week of ${DEFAULT_WEEK_GAMES} games. A real week with more or fewer games changes the picture.`);
+  const estimated = new Map;
+  for (const p of snapshot.players) {
+    const e = estimateAverages(historyOf(p), reference, { current: currentSeason });
+    if (!e.averages)
+      continue;
+    const z = categoryZ(e.averages, baseline);
+    estimated.set(p.id, { name: p.name, averages: e.averages, team: p.team, value: CATEGORIES.reduce((t, c) => t + z[c], 0) });
+  }
+  const weeklyOf = (list, label) => {
+    const names2 = [];
+    const players = [];
+    for (const r2 of list) {
+      const hit = resolvePlayer(r2.name, snapshot.players);
+      if (hit.status === "matched") {
+        names2.push({ input: r2.name, status: "matched", matched: hit.player.name });
+        const e = estimated.get(hit.player.id);
+        if (r2.status !== "IL" && e)
+          players.push({ averages: e.averages, games: gamesFor(e.team), value: e.value });
+      } else if (hit.status === "ambiguous") {
+        names2.push({ input: r2.name, status: "ambiguous", candidates: hit.candidates.map((c) => ({ id: c.id, name: c.name, latest_season: c.seasons[0]?.season ?? "" })) });
+      } else
+        names2.push({ input: r2.name, status: "not_found" });
+    }
+    const missing = names2.filter((n) => n.status !== "matched").length;
+    if (missing > 0)
+      assumptions.push(`${missing} player(s) in the ${label} roster could not be matched and are left out of the weekly totals.`);
+    return { totals: weeklyTotals(players, slots), names: names2 };
+  };
+  const me = weeklyOf(input.roster, "your");
+  let opponents;
+  let names = me.names;
+  if (m.opponent && m.opponent.length > 0) {
+    const o = weeklyOf(m.opponent, "opponent");
+    opponents = [o.totals];
+    names = [...me.names, ...o.names.map((n) => ({ ...n, input: `${n.input} (opponent)` }))];
+  } else {
+    const pool = [...estimated.values()];
+    opponents = typicalOpponents(pool, { teams, rosterSpots: roster_spots }, slots, gamesFor, { leagues: 300, seed: input.seed ?? 1 });
+    assumptions.push(`Typical opponents: ${opponents.length} teams from ${300} simulated ${teams}-team drafts, each playing its best ${slots} players. Positions are ignored.`);
+  }
+  const weeks = m.weeks ?? DEFAULT_WEEKS;
+  const r = simulateWeeks(me.totals, opponents, { weeks, seed: input.seed ?? 1 });
+  assumptions.push(`Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed, so the same inputs give the same answer. ` + `The simulation does not model injuries, lineup moves or streaming during the week.`);
+  const pct = (x) => Math.round(x * 100);
+  return {
+    week_start: week ? weekStart : null,
+    games_source: fromSchedule ? "schedule" : "assumed",
+    opponent: m.opponent && m.opponent.length > 0 ? "roster" : "typical",
+    lineup_slots: slots,
+    weeks,
+    categories: Object.fromEntries(CATEGORIES.map((c) => [c, pct(r.categories[c])])),
+    week_win_pct: pct(r.weekWin),
+    distribution_pct: r.distribution.map(pct),
+    names,
+    assumptions
   };
 }
 

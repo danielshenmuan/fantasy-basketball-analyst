@@ -1,0 +1,11 @@
+{
+  "name": "fantasy-basketball-analyst",
+  "owner": { "name": "Daniel Shen" },
+  "plugins": [
+    {
+      "name": "fantasy-basketball-analyst",
+      "source": "./",
+      "description": "A free fantasy basketball analyst for category leagues: league setup and team health check."
+    }
+  ]
+}

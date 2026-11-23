@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "test": "bun test",
-    "build": "bun build src/cli.ts --target=node --outfile=../skill/scripts/analyze.mjs"
+    "build": "bun build src/cli.ts --target=node --outfile=../skills/team-check/scripts/analyze.mjs"
   },
   "license": "MIT",
   "private": true
