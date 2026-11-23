@@ -203,7 +203,7 @@ function runMatchup(
     );
   }
   const weeks = m.weeks ?? DEFAULT_WEEKS;
-  const r = simulateWeeks(me.totals, opponents, { weeks, seed: input.seed ?? 1 });
+  const r = simulateWeeks(me.totals, opponents, { weeks, seed: input.seed ?? 1, slots });
   assumptions.push(
     `Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed, so the same inputs give the same answer. ` +
       `The simulation does not model injuries, lineup moves or streaming during the week.`,

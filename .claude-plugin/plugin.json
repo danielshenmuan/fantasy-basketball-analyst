@@ -1,8 +1,10 @@
 {
   "name": "fantasy-basketball-analyst",
-  "version": "0.2.0",
-  "description": "A free fantasy basketball analyst for category leagues: league setup, team health check, and more. Reads your league from Yahoo, ESPN or a pasted roster.",
-  "author": { "name": "Daniel Shen" },
+  "version": "0.3.0",
+  "description": "A free fantasy basketball analyst for category leagues: league setup, team health check and weekly matchup. Reads your league from Yahoo, ESPN or a pasted roster.",
+  "author": {
+    "name": "Daniel Shen"
+  },
   "homepage": "https://github.com/danielshenmuan/fantasy-basketball-analyst",
   "license": "MIT"
 }

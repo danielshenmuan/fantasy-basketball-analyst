@@ -18,6 +18,9 @@ export const DEFAULT_WEEKS = 10000;
  * Option 2 (one number per category). FUTURE UPGRADE: Option 3, per-player variance in the snapshot (the roster-to-roster
  * spread is wide, e.g. 3PM 11.6%-17.6%, BLK 18%-28%).
  */
+export const LUCK_REFERENCE_SLOTS = 13;
+/** Luck shrinks with the square root of the number of players: re-measured 2026-11-23 at 10 players, it came out 1.15x (sqrt(13/10) = 1.14). */
+export const luckScale = (slots: number): number => Math.sqrt(LUCK_REFERENCE_SLOTS / slots);
 export const WEEKLY_LUCK = { pts: 0.08, reb: 0.09, ast: 0.11, stl: 0.17, blk: 0.23, fg3m: 0.14, tov: 0.13 } as const;
 export const WEEKLY_LUCK_PCT = { fg: 0.024, ft: 0.041 } as const;
 /** Correlation of that luck across the counting categories (same data). Order: pts, reb, ast, stl, blk, fg3m, tov. */
@@ -86,7 +89,8 @@ export interface MatchupResult {
   distribution: number[];
 }
 
-export interface SimulateWeeksOptions { weeks?: number; seed?: number; luck?: boolean }
+/** `slots`: players who count in each lineup. Luck was measured at 13 and scales with sqrt(13 / slots). */
+export interface SimulateWeeksOptions { weeks?: number; seed?: number; luck?: boolean; slots?: number }
 
 function gaussian(rand: () => number): () => number {
   let spare: number | null = null;
@@ -101,17 +105,17 @@ function gaussian(rand: () => number): () => number {
 }
 
 interface Outcome { cnt: number[]; fg: number; ft: number }
-function outcome(t: WeeklyTotals, luck: boolean, g: () => number): Outcome {
+function outcome(t: WeeklyTotals, luck: boolean, g: () => number, scale: number): Outcome {
   const cnt = COUNT_KEYS.map((k) => t[k]);
   let fg = t.fga > 0 ? t.fgm / t.fga : 0, ft = t.fta > 0 ? t.ftm / t.fta : 0;
   if (luck) {
     const z = COUNT_KEYS.map(() => g());
     COUNT_KEYS.forEach((k, i) => {
       const c = LUCK_L[i]!.reduce((s, v, j) => s + v * z[j]!, 0);
-      cnt[i] = Math.max(0, cnt[i]! * (1 + WEEKLY_LUCK[k] * c));
+      cnt[i] = Math.max(0, cnt[i]! * (1 + WEEKLY_LUCK[k] * scale * c));
     });
-    fg = Math.min(1, Math.max(0, fg + WEEKLY_LUCK_PCT.fg * g()));
-    ft = Math.min(1, Math.max(0, ft + WEEKLY_LUCK_PCT.ft * g()));
+    fg = Math.min(1, Math.max(0, fg + WEEKLY_LUCK_PCT.fg * scale * g()));
+    ft = Math.min(1, Math.max(0, ft + WEEKLY_LUCK_PCT.ft * scale * g()));
   }
   return { cnt, fg, ft };
 }
@@ -128,12 +132,13 @@ export function simulateWeeks(me: WeeklyTotals, opponents: WeeklyTotals[], opts:
   const luck = opts.luck ?? true;
   const rand = mulberry32(opts.seed ?? 1);
   const g = gaussian(rand);
+  const scale = luckScale(opts.slots ?? LUCK_REFERENCE_SLOTS);
   const wins = Array<number>(9).fill(0);
   const dist = Array<number>(10).fill(0);
   let weekWins = 0;
   for (let w = 0; w < weeks; w++) {
     const opp = opponents[opponents.length === 1 ? 0 : Math.floor(rand() * opponents.length)]!;
-    const a = outcome(me, luck, g), b = outcome(opp, luck, g);
+    const a = outcome(me, luck, g, scale), b = outcome(opp, luck, g, scale);
     let won = 0;
     for (let i = 0; i < 7; i++) {
       const isTO = i === 6; // lower turnovers wins

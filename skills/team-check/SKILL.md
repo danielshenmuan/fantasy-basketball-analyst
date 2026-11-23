@@ -1,6 +1,6 @@
 ---
-name: fantasy-basketball-analyst
-description: Fantasy basketball team health check for category leagues. Use when the user wants to know where their fantasy basketball team is strong or weak by category, whether their roster is good, or who to target. Takes a roster and league size, compares the team with a simulated league, and returns elite / strong / neutral / weak for each category. Works with any league host; read the roster from the user's league or have them paste it.
+name: team-check
+description: Fantasy basketball team health check for head-to-head 9-category leagues. Use when the user wants to know where their fantasy basketball team is strong or weak by category, how likely they are to win a typical week, or whether their roster is good. Takes a roster and league settings (from a saved league card or from the league site), compares the team with a simulated league, and returns elite / strong / neutral / weak for each category plus a win chance for each category and for the week. Works with any league host.
 ---
 
 # Fantasy basketball analyst
@@ -9,22 +9,31 @@ Gives a category-by-category health check of a fantasy basketball roster. A scri
 
 Scope today: **9-category leagues** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO). Points leagues and other category sets are not supported; say so instead of approximating.
 
-## What you need from the user
+## What you need
 
-1. **League size**: number of teams.
-2. **Active roster spots**: slots that count toward the weekly totals. Do not count injured-list (IL) slots.
-3. **The roster**: every player on the team, marking anyone on IL.
+1. **League settings**: number of teams, **starters** (players who count each week), and active roster spots (starters plus bench, not IL).
+2. **The roster**: every player on the team, marking anyone on IL.
 
-Read these from the user's league yourself if you can browse it while they are logged in (roster page and league settings). Otherwise ask them to paste the roster. Never ask for a password or log in on their behalf.
+**Look for a league card first.** If the user pasted a "FANTASY LEAGUE CARD", or `~/.fantasy-analyst/league.json` exists, take the settings from it and show them in one line. If there is no card, suggest running the `setup` skill (it saves a card for next time), but do not block on it: ask for the settings directly.
 
-**Before running anything, show the user the players you read and the league size, and ask them to confirm.** Misread names are the most likely source of a wrong answer. Also confirm the scoring is the standard nine categories, and if fewer players are active than roster spots, ask whether someone is missing: an empty slot counts as an average player and flatters or hurts the picture.
+**Get the roster by the first route that works, in this order**, and say in one line which one you are using:
+1. A connected league tool for that site.
+2. Claude in Chrome, in the user's own signed-in browser (open the roster page in a new tab).
+3. The built-in browser or computer use; if a login is needed, ask the user to sign in themselves.
+4. Text the user pastes from the roster page.
+5. Screenshots of the roster page.
+6. The user types the names.
+
+Do not stop at the first failure: say why in a few words and try the next route. This skill is read-only. Never ask for a password, never type one, and never send adds, drops or trades.
+
+**Before running anything, show the user the players you read and the league settings, and ask them to confirm.** Misread names are the most likely source of a wrong answer. Also confirm the league is head-to-head with the standard nine categories; points leagues, roto leagues and other category sets are not supported, so say so instead of approximating. If fewer players are active than roster spots, ask whether someone is missing: an empty slot counts as an average player.
 
 ## Run the analysis
 
-Write the request as JSON and run the script with Node 18 or newer. Use the live data file first; it is refreshed every night.
+Write the request as JSON (`matchup.lineup_slots` is the number of starters; leave `matchup` out if it is unknown) and run the script with Node 18 or newer. Use the live data file first; it is refreshed every night.
 
 ```bash
-echo '{"league":{"teams":12,"roster_spots":13},"roster":[{"name":"Nikola Jokic"},{"name":"Max Strus","status":"IL"}]}' \
+echo '{"league":{"teams":12,"roster_spots":13},"matchup":{"lineup_slots":10},"roster":[{"name":"Nikola Jokic"},{"name":"Max Strus","status":"IL"}]}' \
   | node scripts/analyze.mjs --snapshot https://storage.googleapis.com/fantasy-survivors-analyst-data/snapshot.json
 ```
 
@@ -39,23 +48,22 @@ If the script cannot run at all (no Node, no file access), tell the user the ana
 - `names`: how each typed name was read. For any `ambiguous` or `not_found` entry, **ask the user** which player they meant. Do not guess. Until clarified, that player counts as an average player.
 - `players`: each player's confidence. `none` means no usable NBA data, `low` means a small sample, and a player who missed last season is estimated from earlier seasons. A rookie, or anyone with no completed NBA season, is judged on this season's games alone (see the note on that player) and is always `low` until about 50 games. Mention these when they affect the answer.
 - `baseline`: what the "average rostered player" yardstick is built from. Early in a season it blends last season with this one (`weight_current` is this season's share, which grows with games played). Mention it only if the user asks why numbers moved.
+- `matchup`: the weekly head-to-head simulation against typical opponents. `categories` is the percent of simulated weeks you win each category, `week_win_pct` is the percent of weeks you win 5 or more of 9, and `distribution_pct` is how often you win exactly 0 to 9. These are whole percents: quote them as given. `games_source` says whether the games per player came from the NBA schedule or an assumed average week. Luck, game counts and the method are in `matchup.assumptions`; include the important ones. It does not model injuries, rest days, lineup moves or streaming.
 - `assumptions`: the plain-language list of what the result rests on. Include the important ones in your answer.
 
 ## How to talk about it
 
+- Lead with the picture: the categories the team is built to win, the categories it is losing, and the weekly win chance. Use the bands for strength and the percents from `matchup` for win chances. Do not mention z-scores or an internal score.
 - To say which players drive a category, you may use each player's per-category values in `players` to rank them, but describe it in words ("Jokic and Sengun carry your rebounds"). Never quote those numbers.
-- Lead with the picture: which categories are strengths, which are holes, and which hole looks cheapest to fix. The script does not measure how cheap a fix is, so that part is your judgment and you should say so. Turnovers (TO) and FG% are usually the hardest to move.
-- Do not tell the user to punt (give up) a category as if the analysis found it. Punt detection is not built. You may mention punting as your own judgment, and label it that way.
-- Use the bands and plain stats. Do not mention z-scores or an internal score.
-- Be honest that this is an estimate from past seasons: it does not model injuries, role changes, schedules, or daily lineup limits.
-- Suggestions for pickups and trades should come from the user's own league data (free agents, other rosters) that you read, aimed at the weak categories. Say which suggestions come from the analysis and which are your own judgment.
+- **Everything you say about strategy must be measured, never your own judgment.** Do not recommend punting a category, a build, a pickup, a drop or a trade. If the user asks, say that this recommendation is not available yet because it has to be measured (it needs the waiver and trade tools), and give the measured picture instead. Do not describe a category as "cheap to fix" or "easiest to win" unless a number in the result says it.
+- Be honest that this is an estimate from past seasons: it does not model injuries, role changes, rest days or daily lineup limits.
 - This is entertainment and strategy help. It is not betting or financial advice.
 
 ## Known limits (say so when they apply)
 
 - **Players are valued from their last three completed seasons, not from this season's games.** The one exception is a player with no completed season (a rookie): he is judged on this season's games, which can swing a lot early on. A player with fewer than 5 games this season and no history counts as an average player (`none`). If the roster has a rookie or a returning player, say the number is less certain.
 - A veteran who is playing far above or below his past seasons is not adjusted for it.
-- Positions, injuries to starters, schedules and daily lineup limits are not modelled.
+- Positions, injuries to starters, rest days and daily lineup limits are not modelled. The weekly simulation does use the real game counts when the data has the schedule.
 
 ## Data
 

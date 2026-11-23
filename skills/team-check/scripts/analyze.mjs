@@ -326,6 +326,8 @@ function historyOf(p) {
 // src/matchup.ts
 var DEFAULT_WEEK_GAMES = 3.4;
 var DEFAULT_WEEKS = 1e4;
+var LUCK_REFERENCE_SLOTS = 13;
+var luckScale = (slots) => Math.sqrt(LUCK_REFERENCE_SLOTS / slots);
 var WEEKLY_LUCK = { pts: 0.08, reb: 0.09, ast: 0.11, stl: 0.17, blk: 0.23, fg3m: 0.14, tov: 0.13 };
 var WEEKLY_LUCK_PCT = { fg: 0.024, ft: 0.041 };
 var LUCK_CORRELATION = [
@@ -391,17 +393,17 @@ function gaussian(rand) {
     return r * Math.cos(2 * Math.PI * v);
   };
 }
-function outcome(t, luck, g) {
+function outcome(t, luck, g, scale) {
   const cnt = COUNT_KEYS.map((k) => t[k]);
   let fg = t.fga > 0 ? t.fgm / t.fga : 0, ft = t.fta > 0 ? t.ftm / t.fta : 0;
   if (luck) {
     const z = COUNT_KEYS.map(() => g());
     COUNT_KEYS.forEach((k, i) => {
       const c = LUCK_L[i].reduce((s, v, j) => s + v * z[j], 0);
-      cnt[i] = Math.max(0, cnt[i] * (1 + WEEKLY_LUCK[k] * c));
+      cnt[i] = Math.max(0, cnt[i] * (1 + WEEKLY_LUCK[k] * scale * c));
     });
-    fg = Math.min(1, Math.max(0, fg + WEEKLY_LUCK_PCT.fg * g()));
-    ft = Math.min(1, Math.max(0, ft + WEEKLY_LUCK_PCT.ft * g()));
+    fg = Math.min(1, Math.max(0, fg + WEEKLY_LUCK_PCT.fg * scale * g()));
+    ft = Math.min(1, Math.max(0, ft + WEEKLY_LUCK_PCT.ft * scale * g()));
   }
   return { cnt, fg, ft };
 }
@@ -413,12 +415,13 @@ function simulateWeeks(me, opponents, opts = {}) {
   const luck = opts.luck ?? true;
   const rand = mulberry32(opts.seed ?? 1);
   const g = gaussian(rand);
+  const scale = luckScale(opts.slots ?? LUCK_REFERENCE_SLOTS);
   const wins = Array(9).fill(0);
   const dist = Array(10).fill(0);
   let weekWins = 0;
   for (let w = 0;w < weeks; w++) {
     const opp = opponents[opponents.length === 1 ? 0 : Math.floor(rand() * opponents.length)];
-    const a = outcome(me, luck, g), b = outcome(opp, luck, g);
+    const a = outcome(me, luck, g, scale), b = outcome(opp, luck, g, scale);
     let won = 0;
     for (let i = 0;i < 7; i++) {
       const isTO = i === 6;
@@ -604,7 +607,7 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
     assumptions.push(`Typical opponents: ${opponents.length} teams from ${300} simulated ${teams}-team drafts, each playing its best ${slots} players. Positions are ignored.`);
   }
   const weeks = m.weeks ?? DEFAULT_WEEKS;
-  const r = simulateWeeks(me.totals, opponents, { weeks, seed: input.seed ?? 1 });
+  const r = simulateWeeks(me.totals, opponents, { weeks, seed: input.seed ?? 1, slots });
   assumptions.push(`Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed, so the same inputs give the same answer. ` + `The simulation does not model injuries, lineup moves or streaming during the week.`);
   const pct = (x) => Math.round(x * 100);
   return {

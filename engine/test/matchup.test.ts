@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  LUCK_CORRELATION, mondayOf, simulateWeeks, typicalOpponents, weeklyTotals, WEEKLY_LUCK,
+  LUCK_CORRELATION, luckScale, mondayOf, simulateWeeks, typicalOpponents, weeklyTotals, WEEKLY_LUCK,
   type WeeklyPlayer, type WeeklyTotals,
 } from "../src/matchup";
 import type { SeasonAverages } from "../src/types";
@@ -33,6 +33,10 @@ describe("luck model", () => {
     expect(() => simulateWeeks(weeklyTotals(team(10), 10), [weeklyTotals(team(10), 10)], { weeks: 10 })).not.toThrow();
     expect(LUCK_CORRELATION.length).toBe(7);
     LUCK_CORRELATION.forEach((row, i) => row.forEach((v, j) => expect(v).toBe(LUCK_CORRELATION[j]![i]!)));
+  });
+  test("luck scale is 1 at the 13 players it was measured on", () => {
+    expect(luckScale(13)).toBe(1);
+    expect(luckScale(10)).toBeCloseTo(1.14, 2);
   });
   test("luck table is the measured one", () => {
     expect(WEEKLY_LUCK.blk).toBe(0.23);
@@ -101,6 +105,16 @@ describe("typicalOpponents", () => {
   });
   test("needs enough players", () => {
     expect(() => typicalOpponents(players.slice(0, 5), { teams: 4, rosterSpots: 5 }, 3, () => 3)).toThrow();
+  });
+});
+
+describe("luck scales with the lineup size", () => {
+  test("fewer starters means more luck, so the same edge is less certain", () => {
+    const me = weeklyTotals(team(10), 10);
+    const edge: WeeklyTotals = { ...me, pts: me.pts * 1.05 };
+    const at13 = simulateWeeks(edge, [me], { weeks: 20000, slots: 13 }).categories.PTS;
+    const at5 = simulateWeeks(edge, [me], { weeks: 20000, slots: 5 }).categories.PTS;
+    expect(at5).toBeLessThan(at13);
   });
 });
 

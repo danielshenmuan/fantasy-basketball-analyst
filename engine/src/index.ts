@@ -8,5 +8,5 @@ export {
   type Cutoffs, type RosterPlayer, type PlayerAssessment, type CategoryAssessment, type TeamAssessment,
 } from "./assess";
 export { analyze, type AnalyzeInput, type AnalyzeOutput, type MatchupInput, type MatchupOutput, type NameResult } from "./analyze";
-export { simulateWeeks, typicalOpponents, weeklyTotals, mondayOf, WEEKLY_LUCK, WEEKLY_LUCK_PCT, LUCK_CORRELATION, DEFAULT_WEEKS, DEFAULT_WEEK_GAMES, type WeeklyTotals, type WeeklyPlayer, type MatchupResult } from "./matchup";
+export { simulateWeeks, typicalOpponents, weeklyTotals, mondayOf, WEEKLY_LUCK, WEEKLY_LUCK_PCT, LUCK_REFERENCE_SLOTS, luckScale, LUCK_CORRELATION, DEFAULT_WEEKS, DEFAULT_WEEK_GAMES, type WeeklyTotals, type WeeklyPlayer, type MatchupResult } from "./matchup";
 export { resolvePlayer, nameTokens, historyOf, type Snapshot, type SnapshotPlayer, type NameMatch } from "./snapshot";
