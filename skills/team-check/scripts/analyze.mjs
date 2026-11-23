@@ -474,6 +474,80 @@ function mondayOf(isoDate) {
   return d.toISOString().slice(0, 10);
 }
 
+// src/moves.ts
+function scoreRoster(roster, env, simWeeks = env.simWeeks) {
+  const pad = Math.max(0, env.slots - roster.length);
+  const list = pad > 0 ? [...roster, ...Array(pad).fill(env.replacement)] : roster;
+  let week = 0;
+  const cats = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
+  for (const w of env.weeks) {
+    const totals = weeklyTotals(list.map((p) => ({ averages: p.averages, games: w.gamesFor(p.team), value: p.value })), env.slots);
+    const r = simulateWeeks(totals, w.opponents, { weeks: simWeeks, seed: env.seed, slots: env.slots });
+    week += r.weekWin;
+    for (const c of CATEGORIES)
+      cats[c] += r.categories[c];
+  }
+  const n = env.weeks.length;
+  for (const c of CATEGORIES)
+    cats[c] /= n;
+  return { weekWin: week / n, categories: cats };
+}
+var diff = (a, b) => Object.fromEntries(CATEGORIES.map((c) => [c, a.categories[c] - b.categories[c]]));
+function rankWaiverMoves(roster, candidates, env, opts = {}) {
+  const droppable = opts.droppable ?? roster;
+  const top = opts.top ?? 8;
+  const quick = opts.quickWeeks ?? Math.min(env.simWeeks, 3000);
+  const base = scoreRoster(roster, env, quick);
+  const best = [];
+  for (const add of candidates) {
+    let pick = null;
+    for (const drop of droppable) {
+      const next = roster.filter((p) => p.id !== drop.id).concat(add);
+      const win = scoreRoster(next, env, quick).weekWin;
+      if (!pick || win > pick.win || win === pick.win && drop.value < pick.drop.value)
+        pick = { add, drop, win };
+    }
+    if (pick)
+      best.push(pick);
+  }
+  best.sort((a, b) => b.win - a.win);
+  const baseline = scoreRoster(roster, env);
+  const moves = best.slice(0, top).map(({ add, drop }) => {
+    const after = scoreRoster(roster.filter((p) => p.id !== drop.id).concat(add), env);
+    return { add, drop, after, delta: after.weekWin - baseline.weekWin, categoryDelta: diff(after, baseline) };
+  });
+  moves.sort((a, b) => b.delta - a.delta);
+  return { baseline, moves };
+}
+function evaluateTrade(roster, give, get, env) {
+  const giveIds = new Set(give.map((p) => p.id));
+  const before = scoreRoster(roster, env);
+  const after = scoreRoster(roster.filter((p) => !giveIds.has(p.id)).concat(get), env);
+  return { before, after, delta: after.weekWin - before.weekWin, categoryDelta: diff(after, before) };
+}
+function searchTrades(mine, theirs, env, opts = {}) {
+  const quick = opts.quickWeeks ?? Math.min(env.simWeeks, 2000);
+  const minTheirs = opts.minTheirDelta ?? 0;
+  const baseMine = scoreRoster(mine, env, quick).weekWin, baseTheirs = scoreRoster(theirs, env, quick).weekWin;
+  const found = [];
+  for (const give of mine)
+    for (const get of theirs) {
+      const dm = scoreRoster(mine.filter((p) => p.id !== give.id).concat(get), env, quick).weekWin - baseMine;
+      if (dm <= 0)
+        continue;
+      const dt = scoreRoster(theirs.filter((p) => p.id !== get.id).concat(give), env, quick).weekWin - baseTheirs;
+      if (dt >= minTheirs)
+        found.push({ give, get, dm, dt });
+    }
+  found.sort((a, b) => b.dm - a.dm);
+  return found.slice(0, opts.top ?? 5).map(({ give, get }) => ({
+    give,
+    get,
+    mine: evaluateTrade(mine, [give], [get], env),
+    theirs: evaluateTrade(theirs, [get], [give], env)
+  }));
+}
+
 // src/analyze.ts
 function check(input) {
   const { teams, roster_spots } = input.league ?? {};
@@ -544,6 +618,8 @@ function analyze(input, snapshot) {
   }
   const ranking = CATEGORIES.map((c) => ({ category: c, band: result.categories[c].band, percentile: Math.round(result.categories[c].percentile) })).sort((a, b) => b.percentile - a.percentile);
   const matchup = input.matchup ? runMatchup(input, snapshot, reference, currentSeason, baseline, names) : undefined;
+  const waiver = input.waiver ? runWaiver(input, snapshot, reference, currentSeason, baseline) : undefined;
+  const trade = input.trade ? runTrade(input, snapshot, reference, currentSeason, baseline) : undefined;
   return {
     ...result,
     snapshot: { generated_at: snapshot.generated_at, reference_season: snapshot.reference_season },
@@ -551,7 +627,9 @@ function analyze(input, snapshot) {
     league: input.league,
     names,
     ranking,
-    ...matchup ? { matchup } : {}
+    ...matchup ? { matchup } : {},
+    ...waiver ? { waiver } : {},
+    ...trade ? { trade } : {}
   };
 }
 function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNames) {
@@ -622,6 +700,130 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
     names,
     assumptions
   };
+}
+function estimatePlayers(snapshot, reference, currentSeason, baseline) {
+  const out = new Map;
+  for (const p of snapshot.players) {
+    const e = estimateAverages(historyOf(p), reference, { current: currentSeason });
+    if (!e.averages)
+      continue;
+    const z = categoryZ(e.averages, baseline);
+    out.set(p.id, { id: p.id, name: p.name, averages: e.averages, team: p.team, value: CATEGORIES.reduce((t, c) => t + z[c], 0) });
+  }
+  return out;
+}
+function moveSetup(input, common, snapshot, reference, currentSeason, baseline) {
+  const { teams, roster_spots } = input.league;
+  const slots = common.lineup_slots ?? roster_spots;
+  if (!Number.isInteger(slots) || slots < 1 || slots > 20)
+    throw new Error("lineup_slots must be a whole number from 1 to 20");
+  const horizon = Math.max(1, Math.min(4, common.horizon_weeks ?? 2));
+  const simWeeks = common.weeks ?? 6000;
+  const estimated = estimatePlayers(snapshot, reference, currentSeason, baseline);
+  const pool = [...estimated.values()].sort((a, b) => b.value - a.value);
+  if (pool.length < teams * roster_spots)
+    throw new Error(`snapshot has only ${pool.length} players; need at least ${teams * roster_spots}`);
+  const replacement = pool[teams * roster_spots - 1];
+  const first = mondayOf(snapshot.generated_at);
+  const scheduled = (snapshot.schedule?.weeks ?? []).filter((w) => w.start >= first).slice(0, horizon);
+  const assumptions = [];
+  const seed = input.seed ?? 1;
+  const mk = (start, games) => {
+    const gamesFor = (team) => games && team ? games[team] ?? 0 : DEFAULT_WEEK_GAMES;
+    return { start, gamesFor, opponents: typicalOpponents(pool, { teams, rosterSpots: roster_spots }, slots, gamesFor, { leagues: 150, seed }) };
+  };
+  const weeks = scheduled.length > 0 ? scheduled.map((w) => mk(w.start, w.games)) : [mk(null, null)];
+  const gamesSource = scheduled.length > 0 ? "schedule" : "assumed";
+  assumptions.push(gamesSource === "schedule" ? `Averaged over ${weeks.length} week(s) starting ${weeks[0].start}, counting each player's real games from the NBA schedule.` : `No schedule in the data, so every player gets an average week of ${DEFAULT_WEEK_GAMES} games.`, `Each score is a weekly win chance against typical opponents (${weeks[0].opponents.length} teams from simulated ${teams}-team drafts, positions ignored), ${simWeeks} simulated weeks with a fixed seed. ` + `A move is scored by re-running the same weeks with the roster changed, so the difference is the move's effect. Injuries, rest days and lineup moves during the week are not modelled. An empty lineup spot is filled by a replacement-level player.`);
+  return { env: { slots, weeks, simWeeks, seed, replacement }, estimated, weeksUsed: weeks.map((w) => w.start ?? "assumed"), gamesSource, assumptions };
+}
+function resolveList(list, snapshot, estimated, names, suffix = "") {
+  const out = [];
+  for (const r of list) {
+    const hit = resolvePlayer(r.name, snapshot.players);
+    if (hit.status === "matched") {
+      names.push({ input: r.name + suffix, status: "matched", matched: hit.player.name });
+      const e = estimated.get(hit.player.id);
+      if (e && r.status !== "IL")
+        out.push(e);
+    } else if (hit.status === "ambiguous") {
+      names.push({ input: r.name + suffix, status: "ambiguous", candidates: hit.candidates.map((c) => ({ id: c.id, name: c.name, latest_season: c.seasons[0]?.season ?? "" })) });
+    } else
+      names.push({ input: r.name + suffix, status: "not_found" });
+  }
+  return out;
+}
+var pct1 = (x) => Math.round(x * 1000) / 10;
+var catDelta = (d) => Object.fromEntries(CATEGORIES.map((c) => [c, pct1(d[c])]));
+var side = (b, a, delta, cd) => ({
+  before_week_win_pct: Math.round(b.weekWin * 100),
+  after_week_win_pct: Math.round(a.weekWin * 100),
+  delta_points: pct1(delta),
+  categories_delta_points: catDelta(cd)
+});
+function runWaiver(input, snapshot, reference, currentSeason, baseline) {
+  const w = input.waiver;
+  if (!Array.isArray(w.candidates) || w.candidates.length === 0)
+    throw new Error("waiver.candidates must list at least one available player");
+  if (w.candidates.length > 60)
+    throw new Error("waiver.candidates has more than 60 players; send the best available");
+  const st = moveSetup(input, w, snapshot, reference, currentSeason, baseline);
+  const names = [];
+  const roster = resolveList(input.roster, snapshot, st.estimated, names);
+  const mine = new Set(roster.map((p) => p.id));
+  const cands = resolveList(w.candidates, snapshot, st.estimated, names, " (available)").filter((p) => !mine.has(p.id));
+  if (roster.length === 0)
+    throw new Error("none of the roster players could be matched");
+  const { baseline: base, moves } = rankWaiverMoves(roster, cands, st.env, { top: w.top ?? 8 });
+  return {
+    weeks_used: st.weeksUsed,
+    games_source: st.gamesSource,
+    baseline_week_win_pct: Math.round(base.weekWin * 100),
+    moves: moves.map((m) => ({ add: m.add.name, drop: m.drop.name, week_win_pct: Math.round(m.after.weekWin * 100), delta_points: pct1(m.delta), categories_delta_points: catDelta(m.categoryDelta) })),
+    names,
+    assumptions: st.assumptions
+  };
+}
+function runTrade(input, snapshot, reference, currentSeason, baseline) {
+  const t = input.trade;
+  const st = moveSetup(input, t, snapshot, reference, currentSeason, baseline);
+  const names = [];
+  const mine = resolveList(input.roster, snapshot, st.estimated, names);
+  const theirs = t.other_roster ? resolveList(t.other_roster, snapshot, st.estimated, names, " (other team)") : [];
+  if (mine.length === 0)
+    throw new Error("none of the roster players could be matched");
+  const base = { weeks_used: st.weeksUsed, games_source: st.gamesSource, names };
+  if (t.search) {
+    if (theirs.length === 0)
+      throw new Error("trade.search needs trade.other_roster");
+    const offers = searchTrades(mine, theirs, st.env, { top: t.top ?? 5 });
+    return {
+      mode: "search",
+      ...base,
+      offers: offers.map((o) => ({
+        give: o.give.name,
+        get: o.get.name,
+        you: side(o.mine.before, o.mine.after, o.mine.delta, o.mine.categoryDelta),
+        other_team: side(o.theirs.before, o.theirs.after, o.theirs.delta, o.theirs.categoryDelta)
+      })),
+      assumptions: [...st.assumptions, "Offers are one-for-one swaps that raise your weekly win chance without lowering the other team's. They model the two rosters only: what the other owner actually values, and positions, are not modelled."]
+    };
+  }
+  if (!t.give?.length || !t.get?.length)
+    throw new Error("trade needs give and get (or search with other_roster)");
+  const give = resolveList(t.give, snapshot, st.estimated, names, " (give)");
+  const get = resolveList(t.get, snapshot, st.estimated, names, " (get)");
+  const myIds = new Set(mine.map((p) => p.id));
+  const notMine = give.filter((p) => !myIds.has(p.id));
+  if (notMine.length > 0)
+    throw new Error(`you do not have: ${notMine.map((p) => p.name).join(", ")}`);
+  const you = evaluateTrade(mine, give, get, st.env);
+  const out = { mode: "evaluate", ...base, you: side(you.before, you.after, you.delta, you.categoryDelta), assumptions: st.assumptions };
+  if (theirs.length > 0) {
+    const them = evaluateTrade(theirs, get, give, st.env);
+    out.other_team = side(them.before, them.after, them.delta, them.categoryDelta);
+  }
+  return out;
 }
 
 // src/cli.ts

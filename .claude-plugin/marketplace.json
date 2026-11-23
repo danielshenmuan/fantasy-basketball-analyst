@@ -7,7 +7,7 @@
     {
       "name": "fantasy-basketball-analyst",
       "source": "./",
-      "description": "A free fantasy basketball analyst for category leagues: league setup, team health check and weekly matchup."
+      "description": "A free fantasy basketball analyst for category leagues: setup, team check, matchup, waiver and trade."
     }
   ]
 }

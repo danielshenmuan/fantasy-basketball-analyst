@@ -164,3 +164,34 @@ describe("analyze: weekly matchup simulation (D12)", () => {
     expect(m.assumptions.some((a) => a.includes("could not be matched"))).toBe(true);
   });
 });
+
+describe("analyze: waiver and trade (D12)", () => {
+  const snap: Snapshot = { ...snapshot, generated_at: "2026-11-24T06:00:00Z", players: snapshot.players.map((p, i) => ({ ...p, team: ["HOU", "BOS", "DEN"][i % 3] })) };
+  const req = { league, roster: roster.map((name) => ({ name })) };
+  const common = { lineup_slots: 8, weeks: 1500 };
+  test("waiver ranks available players and reports whole percents and point deltas", () => {
+    const o = analyze({ ...req, waiver: { ...common, candidates: [{ name: "Nikola Jokic" }, { name: "Nobody Atall" }], top: 3 } }, snap).waiver!;
+    expect(Number.isInteger(o.baseline_week_win_pct)).toBe(true);
+    expect(o.moves.length).toBeGreaterThan(0);
+    expect(o.names.some((n) => n.status === "not_found")).toBe(true);
+    expect(o.assumptions.join(" ")).toContain("replacement-level");
+  });
+  test("waiver needs candidates", () => {
+    expect(() => analyze({ ...req, waiver: { candidates: [] } }, snap)).toThrow("candidates");
+  });
+  test("trade evaluate scores your side, and theirs when their roster is given", () => {
+    const o = analyze({ ...req, trade: { ...common, give: [{ name: "Gui Santos" }], get: [{ name: "Nikola Jokic" }], other_roster: [{ name: "Nikola Jokic" }, { name: "Jalen Williams" }] } }, snap).trade!;
+    expect(o.mode).toBe("evaluate");
+    expect(o.you!.delta_points).toBeGreaterThan(0);
+    expect(o.other_team).toBeDefined();
+  });
+  test("trade rejects giving a player you do not have", () => {
+    expect(() => analyze({ ...req, trade: { ...common, give: [{ name: "Nikola Jokic" }], get: [{ name: "Gui Santos" }] } }, snap)).toThrow("do not have");
+  });
+  test("trade search needs their roster and returns offers", () => {
+    expect(() => analyze({ ...req, trade: { ...common, search: true } }, snap)).toThrow("other_roster");
+    const o = analyze({ ...req, trade: { ...common, search: true, top: 3, other_roster: [{ name: "Nikola Jokic" }, { name: "Jalen Williams" }, { name: "Gui Santos" }] } }, snap).trade!;
+    expect(o.mode).toBe("search");
+    expect(Array.isArray(o.offers)).toBe(true);
+  });
+});

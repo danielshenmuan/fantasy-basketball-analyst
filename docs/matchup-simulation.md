@@ -36,3 +36,13 @@ Injuries and rest days during the week, lineup moves and streaming, positions, t
 ## Planned upgrade
 
 One luck number per category ignores that some rosters swing more than others (across random rosters, 3PM luck ranged from 11.6% to 17.6% and BLK from 18% to 28%). The upgrade is per-player variance stored in the nightly data file, used when a prototype shows it moves a weekly win chance by more than a point or two.
+
+## Scoring moves (waiver and trade)
+
+A move is scored by re-running the same simulated weeks with the roster changed. The random draws are identical, so the difference in weekly win chance is the move's effect, not noise.
+
+- **Waiver:** for each available player, try every drop and keep the one that helps most; rank adds by the gain in weekly win chance, averaged over the next two weeks of the schedule. The reported numbers for the top moves are re-scored at full length.
+- **Trade:** remove the players given, add the players received, compare. With the other team's roster, the same for their side. Search tries every one-for-one swap and keeps those that help you without hurting them.
+- **Empty lineup spots** are filled by a replacement-level player (the last player a league of this size would draft).
+
+Everything here is a difference between two simulations. Skills must not add advice that was not measured.
