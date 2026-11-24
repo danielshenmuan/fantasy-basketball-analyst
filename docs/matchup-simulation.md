@@ -15,7 +15,7 @@ The opponent is either a real roster the user supplies, or a typical one: teams 
 
 ## A week already under way
 
-With `so_far` (stats banked by each side, plus the share of games still to play) only the remaining share is expected-plus-luck; banked stats are fixed. Luck was measured on whole weeks, so on a part of a week it is scaled by 1 / sqrt(share). FG% and FT% are re-weighted by attempts across banked and remaining. With nothing banked and the whole week left it reproduces the fresh-week result exactly.
+With `so_far` (stats banked by each side, plus the games each NBA team still plays) only the games left are expected-plus-luck; banked stats are fixed. Each player's remaining games are his own team's games left, so a side whose steal players have not played yet is credited with those steals still to come. The per-day game counts come from the public NBA scoreboard (`skills/matchup/scripts/games-left.mjs`; checked against the data file's weekly counts for all 30 teams). Luck was measured on whole weeks, so on a part of a week it is scaled by 1 / sqrt(share), where share is the lineup's games left over its games that week. FG% and FT% are re-weighted by attempts across banked and remaining. With nothing banked and the whole week left it reproduces the fresh-week result exactly. Without `games_left`, `remaining_share` gives every player the same share (rougher).
 
 ## Measured luck
 

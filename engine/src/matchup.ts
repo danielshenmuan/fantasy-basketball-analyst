@@ -89,15 +89,15 @@ export interface MatchupResult {
   distribution: number[];
 }
 
+export interface SideProgress { banked: WeeklyTotals; remaining: WeeklyTotals; share: number }
 /** `slots`: players who count in each lineup. Luck was measured at 13 and scales with sqrt(13 / slots). */
 export interface SimulateWeeksOptions {
   weeks?: number; seed?: number; luck?: boolean; slots?: number;
   /**
-   * A week already under way. `me` and `opponent` passed to simulateWeeks stay the FULL-week expected totals; `remainingShare`
-   * (0 to 1) is the part of that week still to play, and `me` / `opponent` here are the stats already banked.
-   * Only the remaining part is expected-plus-luck; the banked part is fixed.
+   * A week already under way. Per side: what is already banked, what is still expected over the games left, and `share`
+   * (0 to 1), the part of the side's week still to play, which sets how much luck is left in it.
    */
-  progress?: { remainingShare: number; me: WeeklyTotals; opponent: WeeklyTotals };
+  progress?: { me: SideProgress; opponent: SideProgress };
 }
 
 function gaussian(rand: () => number): () => number {
@@ -128,23 +128,20 @@ function outcome(t: WeeklyTotals, luck: boolean, g: () => number, scale: number)
   return { cnt, fg, ft };
 }
 
-function scaled(t: WeeklyTotals, k: number): WeeklyTotals {
+export function scaledTotals(t: WeeklyTotals, k: number): WeeklyTotals {
   const o = { ...t };
   for (const key of Object.keys(o) as (keyof WeeklyTotals)[]) o[key] = t[key] * k;
   return o;
 }
 
 /**
- * One team's final week when `banked` is already in the books: the banked stats plus the remaining share of the expected
- * week with luck. Luck is measured on a whole week, so on a part of a week it is larger in relative terms by
- * 1 / sqrt(share) (a game's randomness adds like independent draws: the swing of the whole is sqrt(share) times the swing of
- * the full week, while the remaining part is only `share` of the total). FG% and FT% are re-weighted by attempts.
+ * One team's final week with part of it already played: the banked stats plus the expected remaining games with luck.
+ * Luck was measured on whole weeks, so on a part of a week it is larger in relative terms by 1 / sqrt(share) (the swing of
+ * the remaining part is sqrt(share) times the swing of the full week, while its size is only `share` of the total).
+ * FG% and FT% are re-weighted by attempts.
  */
-function finalOutcome(
-  full: WeeklyTotals, banked: WeeklyTotals | undefined, share: number, luck: boolean, g: () => number, scale: number,
-): Outcome {
-  if (!banked) return outcome(full, luck, g, scale);
-  const rem = scaled(full, share);
+function finalOutcome(side: SideProgress, luck: boolean, g: () => number, scale: number): Outcome {
+  const { banked, remaining: rem, share } = side;
   const o = outcome(rem, luck && share > 0, g, share > 0 ? scale / Math.sqrt(share) : scale);
   const cnt = o.cnt.map((v, i) => v + banked[COUNT_KEYS[i]!]);
   const fga = banked.fga + rem.fga, fta = banked.fta + rem.fta;
@@ -174,8 +171,8 @@ export function simulateWeeks(me: WeeklyTotals, opponents: WeeklyTotals[], opts:
   for (let w = 0; w < weeks; w++) {
     const opp = opponents[opponents.length === 1 ? 0 : Math.floor(rand() * opponents.length)]!;
     const pr = opts.progress;
-    const a = finalOutcome(me, pr?.me, pr?.remainingShare ?? 1, luck, g, scale);
-    const b = finalOutcome(opp, pr?.opponent, pr?.remainingShare ?? 1, luck, g, scale);
+    const a = pr ? finalOutcome(pr.me, luck, g, scale) : outcome(me, luck, g, scale);
+    const b = pr ? finalOutcome(pr.opponent, luck, g, scale) : outcome(opp, luck, g, scale);
     let won = 0;
     for (let i = 0; i < 7; i++) {
       const isTO = i === 6; // lower turnovers wins

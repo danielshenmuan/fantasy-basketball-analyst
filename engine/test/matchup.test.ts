@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  LUCK_CORRELATION, luckScale, mondayOf, simulateWeeks, typicalOpponents, weeklyTotals, WEEKLY_LUCK,
+  LUCK_CORRELATION, luckScale, mondayOf, scaledTotals, simulateWeeks, typicalOpponents, weeklyTotals, WEEKLY_LUCK,
   type WeeklyPlayer, type WeeklyTotals,
 } from "../src/matchup";
 import type { SeasonAverages } from "../src/types";
@@ -129,34 +129,39 @@ describe("mondayOf", () => {
 
 describe("a week already under way", () => {
   const me = weeklyTotals(team(10), 10);
-  const zero = scaledZero();
-  function scaledZero(): WeeklyTotals {
-    return { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, fg3m: 0, tov: 0, fgm: 0, fga: 0, ftm: 0, fta: 0 };
-  }
+  const zero: WeeklyTotals = { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, fg3m: 0, tov: 0, fgm: 0, fga: 0, ftm: 0, fta: 0 };
+  const side = (banked: WeeklyTotals, full: WeeklyTotals, share: number) => ({ banked, remaining: scaledTotals(full, share), share });
+  const part = (t: WeeklyTotals, k: number) => scaledTotals(t, k);
   test("nothing banked and the whole week left is the same as a fresh week", () => {
     const fresh = simulateWeeks(me, [me], { weeks: 3000, seed: 3 });
-    const same = simulateWeeks(me, [me], { weeks: 3000, seed: 3, progress: { remainingShare: 1, me: zero, opponent: zero } });
+    const same = simulateWeeks(me, [me], { weeks: 3000, seed: 3, progress: { me: side(zero, me, 1), opponent: side(zero, me, 1) } });
     expect(same).toEqual(fresh);
   });
   test("a lead already banked raises your chance, a deficit lowers it", () => {
-    const lead: WeeklyTotals = { ...me, pts: me.pts * 0.5, reb: me.reb * 0.5, ast: me.ast * 0.5, stl: me.stl * 0.5, blk: me.blk * 0.5, fg3m: me.fg3m * 0.5, tov: me.tov * 0.2, fgm: me.fgm * 0.5, fga: me.fga * 0.4, ftm: me.ftm * 0.5, fta: me.fta * 0.4 };
-    const even = { ...me, pts: me.pts * 0.2, reb: me.reb * 0.2, ast: me.ast * 0.2, stl: me.stl * 0.2, blk: me.blk * 0.2, fg3m: me.fg3m * 0.2, tov: me.tov * 0.2, fgm: me.fgm * 0.2, fga: me.fga * 0.2, ftm: me.ftm * 0.2, fta: me.fta * 0.2 };
-    const ahead = simulateWeeks(me, [me], { weeks: 8000, seed: 1, progress: { remainingShare: 0.5, me: lead, opponent: even } });
-    const behind = simulateWeeks(me, [me], { weeks: 8000, seed: 1, progress: { remainingShare: 0.5, me: even, opponent: lead } });
+    const lead = { ...part(me, 0.5), tov: me.tov * 0.2 }, even = part(me, 0.2);
+    const ahead = simulateWeeks(me, [me], { weeks: 8000, seed: 1, progress: { me: side(lead, me, 0.5), opponent: side(even, me, 0.5) } });
+    const behind = simulateWeeks(me, [me], { weeks: 8000, seed: 1, progress: { me: side(even, me, 0.5), opponent: side(lead, me, 0.5) } });
     expect(ahead.weekWin).toBeGreaterThan(0.9);
     expect(behind.weekWin).toBeLessThan(0.1);
   });
   test("with nothing left to play, the banked stats decide it exactly", () => {
     const win = { ...zero, pts: 100, reb: 50, ast: 30, stl: 10, blk: 8, fg3m: 12, tov: 10, fgm: 40, fga: 80, ftm: 20, fta: 25 };
     const lose = { ...zero, pts: 90, reb: 40, ast: 20, stl: 5, blk: 4, fg3m: 8, tov: 20, fgm: 30, fga: 80, ftm: 15, fta: 25 };
-    const r = simulateWeeks(me, [me], { weeks: 200, seed: 1, progress: { remainingShare: 0, me: win, opponent: lose } });
+    const r = simulateWeeks(me, [me], { weeks: 200, seed: 1, progress: { me: side(win, me, 0), opponent: side(lose, me, 0) } });
     expect(r.weekWin).toBe(1);
     expect(r.distribution[9]).toBe(1);
   });
   test("percentages are weighted by attempts across banked and remaining", () => {
-    // Banked 10/10 shooting and nothing left to play: FG% is 1.0 for you, 0 for an opponent at 0/10.
     const perfect = { ...zero, fgm: 10, fga: 10 }, none = { ...zero, fga: 10 };
-    const r = simulateWeeks(me, [me], { weeks: 50, seed: 1, progress: { remainingShare: 0, me: perfect, opponent: none } });
+    const r = simulateWeeks(me, [me], { weeks: 50, seed: 1, progress: { me: side(perfect, me, 0), opponent: side(none, me, 0) } });
     expect(r.categories["FG%"]).toBe(1);
+  });
+  test("steals still to come count: a side whose steal players have not played yet is more likely to catch up", () => {
+    // Same steals banked, same share left; one side's remaining expected steals are far higher.
+    const banked = { ...zero, stl: 2 }, theirs = { ...zero, stl: 9 };
+    const lots = { ...me, stl: 30 }, few = { ...me, stl: 4 };
+    const stillToCome = simulateWeeks(me, [me], { weeks: 6000, seed: 2, progress: { me: { banked, remaining: part(lots, 0.8), share: 0.8 }, opponent: { banked: theirs, remaining: part(few, 0.8), share: 0.8 } } });
+    const assumedShare = simulateWeeks(me, [me], { weeks: 6000, seed: 2, progress: { me: { banked, remaining: part(few, 0.8), share: 0.8 }, opponent: { banked: theirs, remaining: part(few, 0.8), share: 0.8 } } });
+    expect(stillToCome.categories.STL).toBeGreaterThan(assumedShare.categories.STL + 0.3);
   });
 });

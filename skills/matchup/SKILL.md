@@ -33,15 +33,21 @@ Say in one line which route you use. Move on only when the one before fails, and
 
 ## A week already under way
 
-Mid-week, read the live score from the matchup page and pass it in, or the result restarts from 0-0 and ignores what is already banked. Add `so_far` inside `matchup` (needs a real opponent): made/attempted shots, not percentages, for both sides, plus `remaining_share`, the share of games still to play (the page's "games remaining" divided by total, e.g. 34 of 43 = 0.79):
+Mid-week, read the live score from the matchup page and pass it in, or the result restarts from 0-0 and ignores what is already banked. Also pass each team's games still to play, so every player gets his own team's remaining games (a player whose team plays four more times counts for more than one whose team plays once).
+
+1. Get games left with the helper, from the first day not yet counted in the banked stats through Sunday (today, if today's games have not started and the page does not show them):
+   `node skills/matchup/scripts/games-left.mjs 2026-11-24 2026-11-29`  (prints `{"games":{"ATL":2,...}}`, team codes as in the data file; reads the public NBA scoreboard).
+2. Add `so_far` inside `matchup` (needs a real opponent): made/attempted shots, not percentages, for both sides, plus that `games`:
 
 ```json
-"so_far":{"remaining_share":0.79,
+"so_far":{"games_left":{"ATL":2,"BKN":3},
   "you":{"pts":154,"reb":40,"ast":36,"stl":2,"blk":7,"fg3m":22,"tov":14,"fgm":48,"fga":114,"ftm":36,"fta":37},
   "opponent":{"pts":129,"reb":35,"ast":26,"stl":9,"blk":6,"fg3m":17,"tov":20,"fgm":49,"fga":102,"ftm":14,"fta":15}}
 ```
 
-Check `matchup.so_far_counted` is true, and say the live score was counted. Injured players are still not modelled, including ones who return mid-week.
+If the helper cannot run, use `"remaining_share"` instead of `games_left` (the page's games remaining divided by total, e.g. 34 of 43 = 0.79): rougher, because it gives every player the same share. Games in progress are in neither the banked stats nor the games left; say so.
+
+Check `matchup.so_far_counted` is true and say the live score was counted. Injured players are still not modelled, including ones who return mid-week.
 
 ## Run the analysis
 

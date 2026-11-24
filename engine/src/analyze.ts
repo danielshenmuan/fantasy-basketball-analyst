@@ -6,7 +6,7 @@ import { historyOf, resolvePlayer, type Snapshot } from "./snapshot";
 import { estimateAverages, seasonLabel, startYear } from "./history";
 import { evaluateTrade, rankWaiverMoves, scoreRoster, searchTrades, type Entry, type MoveEnv, type Score, type WeekEnv } from "./moves";
 import {
-  DEFAULT_WEEKS, DEFAULT_WEEK_GAMES, mondayOf, simulateWeeks, typicalOpponents, weeklyTotals,
+  DEFAULT_WEEKS, DEFAULT_WEEK_GAMES, mondayOf, scaledTotals, simulateWeeks, typicalOpponents, weeklyTotals,
   type DraftablePlayer, type WeeklyPlayer, type WeeklyTotals,
 } from "./matchup";
 import { CATEGORIES, type Band, type Category, type PlayerSeason } from "./types";
@@ -86,7 +86,13 @@ export interface MatchupInput {
    * The week is already under way: what each side has banked so far, and the share of the week's games still to play (0 to 1).
    * Needs a real `opponent`. Without it the whole week is simulated from 0-0.
    */
-  so_far?: { you: BankedStats; opponent: BankedStats; remaining_share: number };
+  so_far?: {
+    you: BankedStats; opponent: BankedStats;
+    /** Games each NBA team still plays this week, not yet in the banked stats (team code -> games). Preferred: each player gets his own team's games left. */
+    games_left?: Record<string, number>;
+    /** Fallback when `games_left` is not given: the share of games left (0 to 1), the same for every player. */
+    remaining_share?: number;
+  };
 }
 /** Stats already in the books this week. Made and attempted shots, not percentages. */
 export interface BankedStats {
@@ -221,7 +227,11 @@ function runMatchup(
   const sf = m.so_far;
   if (sf) {
     if (!m.opponent || m.opponent.length === 0) throw new Error("matchup.so_far needs a real matchup.opponent");
-    if (!(sf.remaining_share >= 0 && sf.remaining_share <= 1)) throw new Error("matchup.so_far.remaining_share must be between 0 and 1");
+    if (sf.games_left) {
+      for (const [t, n] of Object.entries(sf.games_left))
+        if (!(Number.isInteger(n) && n >= 0 && n <= 7)) throw new Error(`matchup.so_far.games_left: ${t} must be a whole number of games from 0 to 7`);
+    } else if (!(sf.remaining_share! >= 0 && sf.remaining_share! <= 1))
+      throw new Error("matchup.so_far needs games_left, or remaining_share between 0 and 1");
     for (const side of [sf.you, sf.opponent])
       for (const k of ["pts", "reb", "ast", "stl", "blk", "fg3m", "tov", "fgm", "fga", "ftm", "fta"] as const)
         if (!(typeof side?.[k] === "number" && side[k] >= 0)) throw new Error(`matchup.so_far: ${k} must be a number of 0 or more for both sides`);
@@ -246,29 +256,39 @@ function runMatchup(
     const z = categoryZ(e.averages, baseline);
     estimated.set(p.id, { name: p.name, averages: e.averages, team: p.team, value: CATEGORIES.reduce((t, c) => t + z[c], 0) });
   }
-  const weeklyOf = (list: { name: string; status?: "IL" | "active" }[], label: string): { totals: WeeklyTotals; names: NameResult[] } => {
+  const leftFor = (team: string | undefined): number => (sf?.games_left && team ? (sf.games_left[team] ?? 0) : 0);
+  const weeklyOf = (list: { name: string; status?: "IL" | "active" }[], label: string): { totals: WeeklyTotals; remaining: WeeklyTotals; share: number; names: NameResult[] } => {
     const names: NameResult[] = [];
     const players: WeeklyPlayer[] = [];
+    const lefts: number[] = [];
     for (const r of list) {
       const hit = resolvePlayer(r.name, snapshot.players);
       if (hit.status === "matched") {
         names.push({ input: r.name, status: "matched", matched: hit.player.name });
         const e = estimated.get(hit.player.id);
-        if (r.status !== "IL" && e) players.push({ averages: e.averages, games: gamesFor(e.team), value: e.value });
+        if (r.status !== "IL" && e) { players.push({ averages: e.averages, games: gamesFor(e.team), value: e.value }); lefts.push(leftFor(e.team)); }
       } else if (hit.status === "ambiguous") {
         names.push({ input: r.name, status: "ambiguous", candidates: hit.candidates.map((c) => ({ id: c.id, name: c.name, latest_season: c.seasons[0]?.season ?? "" })) });
       } else names.push({ input: r.name, status: "not_found" });
     }
     const missing = names.filter((n) => n.status !== "matched").length;
     if (missing > 0) assumptions.push(`${missing} player(s) in the ${label} roster could not be matched and are left out of the weekly totals.`);
-    return { totals: weeklyTotals(players, slots), names };
+    const totals = weeklyTotals(players, slots);
+    if (!sf) return { totals, remaining: totals, share: 1, names };
+    if (!sf.games_left) return { totals, remaining: scaledTotals(totals, sf.remaining_share!), share: sf.remaining_share!, names };
+    // Each player's remaining games are his own team's games left. The lineup is the best `slots` by value, as in weeklyTotals.
+    const left = players.map((p, i) => ({ ...p, games: lefts[i]! }));
+    const lineup = players.map((p, i) => ({ p, i })).sort((a, b) => b.p.value - a.p.value).slice(0, slots);
+    const full = lineup.reduce((t, x) => t + x.p.games, 0), rest = lineup.reduce((t, x) => t + lefts[x.i]!, 0);
+    return { totals, remaining: weeklyTotals(left, slots), share: full > 0 ? Math.min(1, rest / full) : 1, names };
   };
 
   const me = weeklyOf(input.roster, "your");
   let opponents: WeeklyTotals[];
   let names = me.names;
+  let opp: ReturnType<typeof weeklyOf> | undefined;
   if (m.opponent && m.opponent.length > 0) {
-    const o = weeklyOf(m.opponent, "opponent");
+    const o = (opp = weeklyOf(m.opponent, "opponent"));
     opponents = [o.totals];
     names = [...me.names, ...o.names.map((n) => ({ ...n, input: `${n.input} (opponent)` }))];
   } else {
@@ -281,12 +301,16 @@ function runMatchup(
   const weeks = m.weeks ?? DEFAULT_WEEKS;
   const r = simulateWeeks(me.totals, opponents, {
     weeks, seed: input.seed ?? 1, slots,
-    ...(sf ? { progress: { remainingShare: sf.remaining_share, me: sf.you, opponent: sf.opponent } } : {}),
+    ...(sf && opp ? { progress: {
+      me: { banked: sf.you, remaining: me.remaining, share: me.share },
+      opponent: { banked: sf.opponent, remaining: opp.remaining, share: opp.share },
+    } } : {}),
   });
   if (sf)
     assumptions.push(
-      `The week is under way: stats already banked are kept, and the remaining ${Math.round(sf.remaining_share * 100)}% of each team's games are simulated from per-game averages plus luck. ` +
-        `The share of games left is taken as given (from the league site), and every player is assumed to have that same share of his week left; which player plays on which remaining day is not modelled.`,
+      sf.games_left
+        ? `The week is under way: stats already banked are kept, and the games still to play (your lineup has ${Math.round(me.share * 100)}% of its week left, theirs ${Math.round(opp!.share * 100)}%) are simulated from each player's own team games left, per-game averages and luck. Games in progress or already counted by the league site must not be in the games left.`
+        : `The week is under way: stats already banked are kept, and the remaining ${Math.round(sf.remaining_share! * 100)}% of each team's games are simulated from per-game averages plus luck. Every player is assumed to have that same share of his week left, which is rough when a team's games are lopsided.`,
     );
   assumptions.push(
     `Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed, so the same inputs give the same answer. ` +

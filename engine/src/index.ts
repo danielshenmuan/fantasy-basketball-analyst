@@ -9,5 +9,5 @@ export {
 } from "./assess";
 export { rankWaiverMoves, evaluateTrade, searchTrades, scoreRoster, type Entry, type MoveEnv, type Score } from "./moves";
 export { analyze, type AnalyzeInput, type AnalyzeOutput, type MatchupInput, type BankedStats, type MatchupOutput, type WaiverInput, type WaiverOutput, type TradeInput, type TradeOutput, type NameResult } from "./analyze";
-export { simulateWeeks, typicalOpponents, weeklyTotals, mondayOf, WEEKLY_LUCK, WEEKLY_LUCK_PCT, LUCK_REFERENCE_SLOTS, luckScale, LUCK_CORRELATION, DEFAULT_WEEKS, DEFAULT_WEEK_GAMES, type WeeklyTotals, type WeeklyPlayer, type MatchupResult } from "./matchup";
+export { simulateWeeks, typicalOpponents, weeklyTotals, mondayOf, WEEKLY_LUCK, WEEKLY_LUCK_PCT, LUCK_REFERENCE_SLOTS, luckScale, LUCK_CORRELATION, DEFAULT_WEEKS, DEFAULT_WEEK_GAMES, type WeeklyTotals, type WeeklyPlayer, type MatchupResult, type SideProgress, scaledTotals } from "./matchup";
 export { resolvePlayer, nameTokens, historyOf, type Snapshot, type SnapshotPlayer, type NameMatch } from "./snapshot";
