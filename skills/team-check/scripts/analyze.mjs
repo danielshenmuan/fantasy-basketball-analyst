@@ -407,6 +407,25 @@ function outcome(t, luck, g, scale) {
   }
   return { cnt, fg, ft };
 }
+function scaled(t, k) {
+  const o = { ...t };
+  for (const key of Object.keys(o))
+    o[key] = t[key] * k;
+  return o;
+}
+function finalOutcome(full, banked, share, luck, g, scale) {
+  if (!banked)
+    return outcome(full, luck, g, scale);
+  const rem = scaled(full, share);
+  const o = outcome(rem, luck && share > 0, g, share > 0 ? scale / Math.sqrt(share) : scale);
+  const cnt = o.cnt.map((v, i) => v + banked[COUNT_KEYS[i]]);
+  const fga = banked.fga + rem.fga, fta = banked.fta + rem.fta;
+  return {
+    cnt,
+    fg: fga > 0 ? (banked.fgm + o.fg * rem.fga) / fga : 0,
+    ft: fta > 0 ? (banked.ftm + o.ft * rem.fta) / fta : 0
+  };
+}
 var CAT_ORDER = ["PTS", "REB", "AST", "STL", "BLK", "3PM", "TO", "FG%", "FT%"];
 function simulateWeeks(me, opponents, opts = {}) {
   if (opponents.length === 0)
@@ -421,7 +440,9 @@ function simulateWeeks(me, opponents, opts = {}) {
   let weekWins = 0;
   for (let w = 0;w < weeks; w++) {
     const opp = opponents[opponents.length === 1 ? 0 : Math.floor(rand() * opponents.length)];
-    const a = outcome(me, luck, g, scale), b = outcome(opp, luck, g, scale);
+    const pr = opts.progress;
+    const a = finalOutcome(me, pr?.me, pr?.remainingShare ?? 1, luck, g, scale);
+    const b = finalOutcome(opp, pr?.opponent, pr?.remainingShare ?? 1, luck, g, scale);
     let won = 0;
     for (let i = 0;i < 7; i++) {
       const isTO = i === 6;
@@ -639,6 +660,17 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
   if (!Number.isInteger(slots) || slots < 1 || slots > 20)
     throw new Error("matchup.lineup_slots must be a whole number from 1 to 20");
   const assumptions = [];
+  const sf = m.so_far;
+  if (sf) {
+    if (!m.opponent || m.opponent.length === 0)
+      throw new Error("matchup.so_far needs a real matchup.opponent");
+    if (!(sf.remaining_share >= 0 && sf.remaining_share <= 1))
+      throw new Error("matchup.so_far.remaining_share must be between 0 and 1");
+    for (const side of [sf.you, sf.opponent])
+      for (const k of ["pts", "reb", "ast", "stl", "blk", "fg3m", "tov", "fgm", "fga", "ftm", "fta"])
+        if (!(typeof side?.[k] === "number" && side[k] >= 0))
+          throw new Error(`matchup.so_far: ${k} must be a number of 0 or more for both sides`);
+  }
   const weekStart = m.week_start ?? mondayOf(snapshot.generated_at);
   const week = snapshot.schedule?.weeks.find((w) => w.start === weekStart);
   const gamesFor = (team) => week && team ? week.games[team] ?? 0 : DEFAULT_WEEK_GAMES;
@@ -685,7 +717,14 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
     assumptions.push(`Typical opponents: ${opponents.length} teams from ${300} simulated ${teams}-team drafts, each playing its best ${slots} players. Positions are ignored.`);
   }
   const weeks = m.weeks ?? DEFAULT_WEEKS;
-  const r = simulateWeeks(me.totals, opponents, { weeks, seed: input.seed ?? 1, slots });
+  const r = simulateWeeks(me.totals, opponents, {
+    weeks,
+    seed: input.seed ?? 1,
+    slots,
+    ...sf ? { progress: { remainingShare: sf.remaining_share, me: sf.you, opponent: sf.opponent } } : {}
+  });
+  if (sf)
+    assumptions.push(`The week is under way: stats already banked are kept, and the remaining ${Math.round(sf.remaining_share * 100)}% of each team's games are simulated from per-game averages plus luck. ` + `The share of games left is taken as given (from the league site), and every player is assumed to have that same share of his week left; which player plays on which remaining day is not modelled.`);
   assumptions.push(`Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed, so the same inputs give the same answer. ` + `The simulation does not model injuries, lineup moves or streaming during the week.`);
   const pct = (x) => Math.round(x * 100);
   return {
@@ -694,6 +733,7 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
     opponent: m.opponent && m.opponent.length > 0 ? "roster" : "typical",
     lineup_slots: slots,
     weeks,
+    so_far_counted: Boolean(sf),
     categories: Object.fromEntries(CATEGORIES.map((c) => [c, pct(r.categories[c])])),
     week_win_pct: pct(r.weekWin),
     distribution_pct: r.distribution.map(pct),

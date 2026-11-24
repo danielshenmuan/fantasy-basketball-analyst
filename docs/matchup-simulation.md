@@ -13,6 +13,10 @@ In a head-to-head 9-category league you win a week by winning at least 5 of 9 ca
 
 The opponent is either a real roster the user supplies, or a typical one: teams from simulated snake drafts of the league's size (each pick one of the best five remaining; positions ignored; each team plays its best N players).
 
+## A week already under way
+
+With `so_far` (stats banked by each side, plus the share of games still to play) only the remaining share is expected-plus-luck; banked stats are fixed. Luck was measured on whole weeks, so on a part of a week it is scaled by 1 / sqrt(share). FG% and FT% are re-weighted by attempts across banked and remaining. With nothing banked and the whole week left it reproduces the fresh-week result exactly.
+
 ## Measured luck
 
 Measured on 1,500 random 13-player rosters over the 25 full weeks of 2025-26, **after** removing the effect of how many games each player played:

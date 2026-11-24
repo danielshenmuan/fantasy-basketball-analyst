@@ -126,3 +126,37 @@ describe("mondayOf", () => {
     expect(mondayOf("2026-12-01")).toBe("2026-11-30");
   });
 });
+
+describe("a week already under way", () => {
+  const me = weeklyTotals(team(10), 10);
+  const zero = scaledZero();
+  function scaledZero(): WeeklyTotals {
+    return { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, fg3m: 0, tov: 0, fgm: 0, fga: 0, ftm: 0, fta: 0 };
+  }
+  test("nothing banked and the whole week left is the same as a fresh week", () => {
+    const fresh = simulateWeeks(me, [me], { weeks: 3000, seed: 3 });
+    const same = simulateWeeks(me, [me], { weeks: 3000, seed: 3, progress: { remainingShare: 1, me: zero, opponent: zero } });
+    expect(same).toEqual(fresh);
+  });
+  test("a lead already banked raises your chance, a deficit lowers it", () => {
+    const lead: WeeklyTotals = { ...me, pts: me.pts * 0.5, reb: me.reb * 0.5, ast: me.ast * 0.5, stl: me.stl * 0.5, blk: me.blk * 0.5, fg3m: me.fg3m * 0.5, tov: me.tov * 0.2, fgm: me.fgm * 0.5, fga: me.fga * 0.4, ftm: me.ftm * 0.5, fta: me.fta * 0.4 };
+    const even = { ...me, pts: me.pts * 0.2, reb: me.reb * 0.2, ast: me.ast * 0.2, stl: me.stl * 0.2, blk: me.blk * 0.2, fg3m: me.fg3m * 0.2, tov: me.tov * 0.2, fgm: me.fgm * 0.2, fga: me.fga * 0.2, ftm: me.ftm * 0.2, fta: me.fta * 0.2 };
+    const ahead = simulateWeeks(me, [me], { weeks: 8000, seed: 1, progress: { remainingShare: 0.5, me: lead, opponent: even } });
+    const behind = simulateWeeks(me, [me], { weeks: 8000, seed: 1, progress: { remainingShare: 0.5, me: even, opponent: lead } });
+    expect(ahead.weekWin).toBeGreaterThan(0.9);
+    expect(behind.weekWin).toBeLessThan(0.1);
+  });
+  test("with nothing left to play, the banked stats decide it exactly", () => {
+    const win = { ...zero, pts: 100, reb: 50, ast: 30, stl: 10, blk: 8, fg3m: 12, tov: 10, fgm: 40, fga: 80, ftm: 20, fta: 25 };
+    const lose = { ...zero, pts: 90, reb: 40, ast: 20, stl: 5, blk: 4, fg3m: 8, tov: 20, fgm: 30, fga: 80, ftm: 15, fta: 25 };
+    const r = simulateWeeks(me, [me], { weeks: 200, seed: 1, progress: { remainingShare: 0, me: win, opponent: lose } });
+    expect(r.weekWin).toBe(1);
+    expect(r.distribution[9]).toBe(1);
+  });
+  test("percentages are weighted by attempts across banked and remaining", () => {
+    // Banked 10/10 shooting and nothing left to play: FG% is 1.0 for you, 0 for an opponent at 0/10.
+    const perfect = { ...zero, fgm: 10, fga: 10 }, none = { ...zero, fga: 10 };
+    const r = simulateWeeks(me, [me], { weeks: 50, seed: 1, progress: { remainingShare: 0, me: perfect, opponent: none } });
+    expect(r.categories["FG%"]).toBe(1);
+  });
+});

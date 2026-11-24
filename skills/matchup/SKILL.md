@@ -31,6 +31,18 @@ Say in one line which route you use. Move on only when the one before fails, and
 
 **Before running anything, show both rosters and the league settings and ask the user to confirm.** Misread names are the most likely source of a wrong answer.
 
+## A week already under way
+
+Mid-week, read the live score from the matchup page and pass it in, or the result restarts from 0-0 and ignores what is already banked. Add `so_far` inside `matchup` (needs a real opponent): made/attempted shots, not percentages, for both sides, plus `remaining_share`, the share of games still to play (the page's "games remaining" divided by total, e.g. 34 of 43 = 0.79):
+
+```json
+"so_far":{"remaining_share":0.79,
+  "you":{"pts":154,"reb":40,"ast":36,"stl":2,"blk":7,"fg3m":22,"tov":14,"fgm":48,"fga":114,"ftm":36,"fta":37},
+  "opponent":{"pts":129,"reb":35,"ast":26,"stl":9,"blk":6,"fg3m":17,"tov":20,"fgm":49,"fga":102,"ftm":14,"fta":15}}
+```
+
+Check `matchup.so_far_counted` is true, and say the live score was counted. Injured players are still not modelled, including ones who return mid-week.
+
 ## Run the analysis
 
 Write the request as JSON and run the script with Node 18 or newer, using the live data file (refreshed every night):

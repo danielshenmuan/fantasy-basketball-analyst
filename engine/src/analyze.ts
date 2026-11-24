@@ -82,6 +82,16 @@ export interface MatchupInput {
   lineup_slots?: number;
   /** Simulated weeks (default 10000). */
   weeks?: number;
+  /**
+   * The week is already under way: what each side has banked so far, and the share of the week's games still to play (0 to 1).
+   * Needs a real `opponent`. Without it the whole week is simulated from 0-0.
+   */
+  so_far?: { you: BankedStats; opponent: BankedStats; remaining_share: number };
+}
+/** Stats already in the books this week. Made and attempted shots, not percentages. */
+export interface BankedStats {
+  pts: number; reb: number; ast: number; stl: number; blk: number; fg3m: number; tov: number;
+  fgm: number; fga: number; ftm: number; fta: number;
 }
 export interface MatchupOutput {
   week_start: string | null;
@@ -90,6 +100,8 @@ export interface MatchupOutput {
   opponent: "typical" | "roster";
   lineup_slots: number;
   weeks: number;
+  /** True when the stats already banked this week were counted (`so_far`). */
+  so_far_counted: boolean;
   /** Whole percent of simulated weeks you win each category. */
   categories: Record<Category, number>;
   /** Whole percent of simulated weeks you win 5 or more of 9. */
@@ -206,6 +218,14 @@ function runMatchup(
   const slots = m.lineup_slots ?? roster_spots;
   if (!Number.isInteger(slots) || slots < 1 || slots > 20) throw new Error("matchup.lineup_slots must be a whole number from 1 to 20");
   const assumptions: string[] = [];
+  const sf = m.so_far;
+  if (sf) {
+    if (!m.opponent || m.opponent.length === 0) throw new Error("matchup.so_far needs a real matchup.opponent");
+    if (!(sf.remaining_share >= 0 && sf.remaining_share <= 1)) throw new Error("matchup.so_far.remaining_share must be between 0 and 1");
+    for (const side of [sf.you, sf.opponent])
+      for (const k of ["pts", "reb", "ast", "stl", "blk", "fg3m", "tov", "fgm", "fga", "ftm", "fta"] as const)
+        if (!(typeof side?.[k] === "number" && side[k] >= 0)) throw new Error(`matchup.so_far: ${k} must be a number of 0 or more for both sides`);
+  }
 
   // Games per team this week, from the schedule in the snapshot.
   const weekStart = m.week_start ?? mondayOf(snapshot.generated_at);
@@ -259,7 +279,15 @@ function runMatchup(
     );
   }
   const weeks = m.weeks ?? DEFAULT_WEEKS;
-  const r = simulateWeeks(me.totals, opponents, { weeks, seed: input.seed ?? 1, slots });
+  const r = simulateWeeks(me.totals, opponents, {
+    weeks, seed: input.seed ?? 1, slots,
+    ...(sf ? { progress: { remainingShare: sf.remaining_share, me: sf.you, opponent: sf.opponent } } : {}),
+  });
+  if (sf)
+    assumptions.push(
+      `The week is under way: stats already banked are kept, and the remaining ${Math.round(sf.remaining_share * 100)}% of each team's games are simulated from per-game averages plus luck. ` +
+        `The share of games left is taken as given (from the league site), and every player is assumed to have that same share of his week left; which player plays on which remaining day is not modelled.`,
+    );
   assumptions.push(
     `Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed, so the same inputs give the same answer. ` +
       `The simulation does not model injuries, lineup moves or streaming during the week.`,
@@ -271,6 +299,7 @@ function runMatchup(
     opponent: m.opponent && m.opponent.length > 0 ? "roster" : "typical",
     lineup_slots: slots,
     weeks,
+    so_far_counted: Boolean(sf),
     categories: Object.fromEntries(CATEGORIES.map((c) => [c, pct(r.categories[c])])) as Record<Category, number>,
     week_win_pct: pct(r.weekWin),
     distribution_pct: r.distribution.map(pct),
