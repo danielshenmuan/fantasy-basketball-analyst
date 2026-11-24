@@ -512,31 +512,51 @@ function scoreRoster(roster, env, simWeeks = env.simWeeks) {
   return { weekWin: week / n, categories: cats };
 }
 var diff = (a, b) => Object.fromEntries(CATEGORIES.map((c) => [c, a.categories[c] - b.categories[c]]));
+function entersLineup(roster, entry, env) {
+  const pad = Math.max(0, env.slots - roster.length);
+  const list = pad > 0 ? [...roster, ...Array(pad).fill(env.replacement)] : roster;
+  return [...list].sort((a, b) => b.value - a.value).slice(0, env.slots).includes(entry);
+}
 function rankWaiverMoves(roster, candidates, env, opts = {}) {
   const droppable = opts.droppable ?? roster;
   const top = opts.top ?? 8;
   const quick = opts.quickWeeks ?? Math.min(env.simWeeks, 3000);
   const base = scoreRoster(roster, env, quick);
+  const without = (drop) => roster.filter((p) => p.id !== drop.id);
+  const unranked = [];
   const best = [];
   for (const add of candidates) {
     let pick = null;
     for (const drop of droppable) {
-      const next = roster.filter((p) => p.id !== drop.id).concat(add);
+      const next = without(drop).concat(add);
+      if (!entersLineup(next, add, env))
+        continue;
       const win = scoreRoster(next, env, quick).weekWin;
       if (!pick || win > pick.win || win === pick.win && drop.value < pick.drop.value)
         pick = { add, drop, win };
     }
     if (pick)
       best.push(pick);
+    else
+      unranked.push({ add, reason: "bench-only" });
   }
   best.sort((a, b) => b.win - a.win);
   const baseline = scoreRoster(roster, env);
-  const moves = best.slice(0, top).map(({ add, drop }) => {
-    const after = scoreRoster(roster.filter((p) => p.id !== drop.id).concat(add), env);
-    return { add, drop, after, delta: after.weekWin - baseline.weekWin, categoryDelta: diff(after, baseline) };
-  });
-  moves.sort((a, b) => b.delta - a.delta);
-  return { baseline, moves };
+  const dropOnly = new Map;
+  const moves = [];
+  for (const { add, drop } of best.slice(0, top * 2)) {
+    if (!dropOnly.has(drop.id))
+      dropOnly.set(drop.id, scoreRoster(without(drop), env).weekWin);
+    const after = scoreRoster(without(drop).concat(add), env);
+    const addDelta = after.weekWin - dropOnly.get(drop.id);
+    if (addDelta <= 0) {
+      unranked.push({ add, reason: "no-gain-from-add" });
+      continue;
+    }
+    moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: dropOnly.get(drop.id) - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline) });
+  }
+  moves.sort((a, b) => b.addDelta - a.addDelta);
+  return { baseline, moves: moves.slice(0, top), unranked };
 }
 function evaluateTrade(roster, give, get, env) {
   const giveIds = new Set(give.map((p) => p.id));
@@ -677,6 +697,7 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
   const week = snapshot.schedule?.weeks.find((w) => w.start === weekStart);
   const gamesFor = (team) => week && team ? week.games[team] ?? 0 : DEFAULT_WEEK_GAMES;
   const fromSchedule = Boolean(week);
+  const tbd = week?.tbd_slots ?? 0;
   assumptions.push(fromSchedule ? `Games per player come from the NBA schedule for the week of ${weekStart}. Injuries and rest days are not modelled.` : `No schedule for the week of ${weekStart} in the data, so every player gets an average week of ${DEFAULT_WEEK_GAMES} games. A real week with more or fewer games changes the picture.`);
   const estimated = new Map;
   for (const p of snapshot.players) {
@@ -686,9 +707,12 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
     const z = categoryZ(e.averages, baseline);
     estimated.set(p.id, { name: p.name, averages: e.averages, team: p.team, value: CATEGORIES.reduce((t, c) => t + z[c], 0) });
   }
+  if (tbd > 0)
+    assumptions.unshift(`WARNING: ${tbd} game slot(s) in the week of ${weekStart} are still "TBD" in the NBA schedule, so some teams' game counts may be too low. Check the real schedule and treat these numbers as rougher.`);
   const leftFor = (team) => sf?.games_left && team ? sf.games_left[team] ?? 0 : 0;
   const weeklyOf = (list, label) => {
     const names2 = [];
+    const rows = [];
     const players = [];
     const lefts = [];
     for (const r2 of list) {
@@ -696,6 +720,8 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
       if (hit.status === "matched") {
         names2.push({ input: r2.name, status: "matched", matched: hit.player.name });
         const e = estimated.get(hit.player.id);
+        if (e)
+          rows.push({ name: hit.player.name, team: e.team ?? null, games: gamesFor(e.team), ...sf?.games_left ? { games_left: leftFor(e.team) } : {}, counted: false, ...r2.status === "IL" ? { status: "IL" } : {}, value: e.value });
         if (r2.status !== "IL" && e) {
           players.push({ averages: e.averages, games: gamesFor(e.team), value: e.value });
           lefts.push(leftFor(e.team));
@@ -709,14 +735,16 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
     if (missing > 0)
       assumptions.push(`${missing} player(s) in the ${label} roster could not be matched and are left out of the weekly totals.`);
     const totals = weeklyTotals(players, slots);
+    const counted = new Set(rows.filter((x) => x.status !== "IL").sort((a, b) => b.value - a.value).slice(0, slots));
+    const out = rows.map(({ value: _v, ...x }, i) => ({ ...x, counted: counted.has(rows[i]) })).sort((a, b) => Number(b.counted) - Number(a.counted) || b.games - a.games);
     if (!sf)
-      return { totals, remaining: totals, share: 1, names: names2 };
+      return { totals, remaining: totals, share: 1, names: names2, rows: out };
     if (!sf.games_left)
-      return { totals, remaining: scaledTotals(totals, sf.remaining_share), share: sf.remaining_share, names: names2 };
+      return { totals, remaining: scaledTotals(totals, sf.remaining_share), share: sf.remaining_share, names: names2, rows: out };
     const left = players.map((p, i) => ({ ...p, games: lefts[i] }));
     const lineup = players.map((p, i) => ({ p, i })).sort((a, b) => b.p.value - a.p.value).slice(0, slots);
     const full = lineup.reduce((t, x) => t + x.p.games, 0), rest = lineup.reduce((t, x) => t + lefts[x.i], 0);
-    return { totals, remaining: weeklyTotals(left, slots), share: full > 0 ? Math.min(1, rest / full) : 1, names: names2 };
+    return { totals, remaining: weeklyTotals(left, slots), share: full > 0 ? Math.min(1, rest / full) : 1, names: names2, rows: out };
   };
   const me = weeklyOf(input.roster, "your");
   let opponents;
@@ -748,6 +776,7 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
   return {
     week_start: week ? weekStart : null,
     games_source: fromSchedule ? "schedule" : "assumed",
+    schedule_incomplete: tbd > 0,
     opponent: m.opponent && m.opponent.length > 0 ? "roster" : "typical",
     lineup_slots: slots,
     weeks,
@@ -755,6 +784,7 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
     categories: Object.fromEntries(CATEGORIES.map((c) => [c, pct(r.categories[c])])),
     week_win_pct: pct(r.weekWin),
     distribution_pct: r.distribution.map(pct),
+    rosters: { you: me.rows, ...opp ? { opponent: opp.rows } : {} },
     names,
     assumptions
   };
@@ -766,7 +796,7 @@ function estimatePlayers(snapshot, reference, currentSeason, baseline) {
     if (!e.averages)
       continue;
     const z = categoryZ(e.averages, baseline);
-    out.set(p.id, { id: p.id, name: p.name, averages: e.averages, team: p.team, value: CATEGORIES.reduce((t, c) => t + z[c], 0) });
+    out.set(p.id, { id: p.id, name: p.name, averages: e.averages, team: p.team, value: CATEGORIES.reduce((t, c) => t + z[c], 0), confidence: e.confidence });
   }
   return out;
 }
@@ -792,6 +822,9 @@ function moveSetup(input, common, snapshot, reference, currentSeason, baseline) 
   };
   const weeks = scheduled.length > 0 ? scheduled.map((w) => mk(w.start, w.games)) : [mk(null, null)];
   const gamesSource = scheduled.length > 0 ? "schedule" : "assumed";
+  for (const w of scheduled)
+    if (w.tbd_slots)
+      assumptions.push(`WARNING: ${w.tbd_slots} game slot(s) in the week of ${w.start} are still "TBD" in the NBA schedule, so some teams' game counts may be too low.`);
   assumptions.push(gamesSource === "schedule" ? `Averaged over ${weeks.length} week(s) starting ${weeks[0].start}, counting each player's real games from the NBA schedule.` : `No schedule in the data, so every player gets an average week of ${DEFAULT_WEEK_GAMES} games.`, `Each score is a weekly win chance against typical opponents (${weeks[0].opponents.length} teams from simulated ${teams}-team drafts, positions ignored), ${simWeeks} simulated weeks with a fixed seed. ` + `A move is scored by re-running the same weeks with the roster changed, so the difference is the move's effect. Injuries, rest days and lineup moves during the week are not modelled. An empty lineup spot is filled by a replacement-level player.`);
   return { env: { slots, weeks, simWeeks, seed, replacement }, estimated, weeksUsed: weeks.map((w) => w.start ?? "assumed"), gamesSource, assumptions };
 }
@@ -832,14 +865,24 @@ function runWaiver(input, snapshot, reference, currentSeason, baseline) {
   const cands = resolveList(w.candidates, snapshot, st.estimated, names, " (available)").filter((p) => !mine.has(p.id));
   if (roster.length === 0)
     throw new Error("none of the roster players could be matched");
-  const { baseline: base, moves } = rankWaiverMoves(roster, cands, st.env, { top: w.top ?? 8 });
+  const { baseline: base, moves, unranked } = rankWaiverMoves(roster, cands, st.env, { top: w.top ?? 8 });
   return {
     weeks_used: st.weeksUsed,
     games_source: st.gamesSource,
     baseline_week_win_pct: Math.round(base.weekWin * 100),
-    moves: moves.map((m) => ({ add: m.add.name, drop: m.drop.name, week_win_pct: Math.round(m.after.weekWin * 100), delta_points: pct1(m.delta), categories_delta_points: catDelta(m.categoryDelta) })),
+    moves: moves.map((m) => ({
+      add: m.add.name,
+      drop: m.drop.name,
+      week_win_pct: Math.round(m.after.weekWin * 100),
+      delta_points: pct1(m.delta),
+      drop_only_points: pct1(m.dropOnlyDelta),
+      add_effect_points: pct1(m.addDelta),
+      add_confidence: m.add.confidence ?? "none",
+      categories_delta_points: catDelta(m.categoryDelta)
+    })),
+    not_ranked: unranked.map((u) => ({ add: u.add.name, reason: u.reason })),
     names,
-    assumptions: st.assumptions
+    assumptions: [...st.assumptions, "Moves are ranked by what the added player contributes beyond the drop. A player who would not enter your lineup, or who adds nothing beyond removing the drop, is listed as not ranked."]
   };
 }
 function runTrade(input, snapshot, reference, currentSeason, baseline) {

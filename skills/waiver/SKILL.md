@@ -40,7 +40,9 @@ echo '{"league":{"teams":14,"roster_spots":13},
 Look at the `waiver` object:
 
 - `baseline_week_win_pct`: the user's weekly win chance as the roster stands, averaged over `weeks_used`.
-- `moves`: best first. Each has `add`, the `drop` that serves it best, `week_win_pct` after the move, `delta_points` (the change in weekly win chance, in percentage points) and `categories_delta_points` (the change in each category's win chance).
+- `moves`: best first, ranked by what the added player contributes. Each has `add`, the `drop` that serves it best, `week_win_pct` after the move, `delta_points` (change in weekly win chance, in percentage points, against the roster as it stands), `drop_only_points` (what dropping that player alone would do), `add_effect_points` (the add's own contribution: `delta_points` minus `drop_only_points`), `add_confidence` and `categories_delta_points`. Quote `add_effect_points` as the value of the add; if `drop_only_points` is large, say part of the gain comes from the drop.
+- `add_confidence`: `low` means the estimate rests on few games. Say so.
+- `not_ranked`: candidates left out because they would sit on the bench (`bench-only`, no lineup effect) or add nothing beyond the drop (`no-gain-from-add`). Tell the user these two kinds of candidates do not change the week, and never quote a number for them.
 - A `delta_points` under about 1 is not a meaningful change: say "no real change". Quote the others as "about +N points".
 - `games_source`: `schedule` means real game counts; `assumed` means an average week for everyone, so say the numbers are rougher.
 - `names`: for any `ambiguous` or `not_found` player, ask the user which player they meant. Do not guess.

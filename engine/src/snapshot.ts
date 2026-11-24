@@ -15,7 +15,8 @@ export interface Snapshot {
 }
 export interface SnapshotSchedule {
   source: string;
-  weeks: { start: string; games: Record<string, number> }[];
+  /** `tbd_slots`: games the source lists with a team not yet announced; those teams' counts for the week may be low. */
+  weeks: { start: string; games: Record<string, number>; tbd_slots?: number }[];
 }
 export interface SnapshotPlayer {
   id: number;

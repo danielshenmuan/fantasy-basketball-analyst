@@ -71,6 +71,8 @@ Look at the `matchup` object:
 - `categories`: whole percent of simulated weeks the user wins each category. `week_win_pct`: the percent of weeks they win 5 or more of 9. `distribution_pct`: how often they win exactly 0 to 9. Quote these as given.
 - `opponent`: `roster` means the real opponent was used; `typical` means no opponent was read and these are typical opponents.
 - `games_source`: `schedule` means each player's games this week come from the NBA schedule; `assumed` means an average week (3.4 games) for everyone, so say the numbers are rougher.
+- `schedule_incomplete`: true means the NBA schedule for this week still has games with a team to be announced, so some game counts may be low. Say so before quoting numbers.
+- `rosters.you` and `rosters.opponent`: every matched player with his team's `games` this week, `games_left` (when the week is under way), and `counted` (true if he is in the counted lineup; false for bench and IL). When the user asks who has how many games left, answer from this list.
 - `names` (top level and inside `matchup`): for any `ambiguous` or `not_found` player, ask the user which player they meant. Do not guess. That player is left out of the totals until clarified.
 - `matchup.assumptions`: include the important ones.
 

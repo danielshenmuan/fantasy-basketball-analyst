@@ -47,11 +47,32 @@ describe("rankWaiverMoves", () => {
     expect(moves[0]!.drop.name).toBe("weak");
     expect(moves[0]!.delta).toBeGreaterThan(0.05);
     expect(moves[0]!.after.weekWin).toBeCloseTo(baseline.weekWin + moves[0]!.delta, 10);
-    expect(moves[1]!.delta).toBeLessThan(moves[0]!.delta);
+    expect(moves.length).toBe(1); // the worse player is left unranked, not ranked last
   });
-  test("a clearly worse player is never an improvement", () => {
-    const { moves } = rankWaiverMoves(roster, [bad], env);
-    expect(moves[0]!.delta).toBeLessThanOrEqual(0.005);
+  test("a clearly worse player is not ranked at all", () => {
+    const { moves, unranked } = rankWaiverMoves(roster, [bad], env);
+    expect(moves.length).toBe(0);
+    expect(unranked.length).toBe(1);
+  });
+  test("a move's gain splits into the drop alone and what the add contributes", () => {
+    const { moves } = rankWaiverMoves(roster, [good], env);
+    const m = moves[0]!;
+    expect(m.addDelta).toBeCloseTo(m.delta - m.dropOnlyDelta, 10);
+    expect(m.addDelta).toBeGreaterThan(0);
+  });
+  test("regression: two different bench-level adds are not ranked on a gain that comes from the drop", () => {
+    // A deep roster: 14 players for 10 slots. Dropping the one player who hurts (turnovers, poor shooting) helps by itself.
+    const deep = [...lineup(10, {}, "d"), entry("hurts", { pts: 12, turnovers: 5, fg_pct: 0.38, fgm: 4.2, ft_pct: 0.6, ftm: 1.8 }, 9.5), ...lineup(3, { pts: 6, reb: 2 }, "b")];
+    const a = entry("benchA", { pts: 7, reb: 6, blk: 1 }, -3), b = entry("benchB", { pts: 6, ast: 4, stl: 1.5 }, -4);
+    const r = rankWaiverMoves(deep, [a, b], env);
+    expect(r.moves.length).toBe(0);
+    expect(r.unranked.map((u) => u.reason).sort()).toEqual(["bench-only", "bench-only"]);
+  });
+  test("an add who enters the lineup and helps is ranked with a positive add effect", () => {
+    const deep = [...lineup(10, {}, "d"), ...lineup(3, { pts: 6, reb: 2 }, "b")];
+    const r = rankWaiverMoves(deep, [good], env);
+    expect(r.moves[0]!.add.name).toBe("good");
+    expect(r.moves[0]!.addDelta).toBeGreaterThan(0);
   });
   test("category changes add up to something that moves the way the player does", () => {
     const { moves } = rankWaiverMoves(roster, [good], env);

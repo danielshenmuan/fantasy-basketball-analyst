@@ -159,6 +159,21 @@ describe("analyze: weekly matchup simulation (D12)", () => {
     expect(m.opponent).toBe("roster");
     expect(m.week_win_pct).toBeGreaterThan(90);
   });
+  test("a week with TBD games is flagged and warned about", () => {
+    const snapTbd = { ...withTeams({ HOU: 4, BOS: 3, DEN: 2 }), schedule: { source: "test", weeks: [{ start: "2026-11-23", games: { HOU: 4, BOS: 3, DEN: 2 }, tbd_slots: 8 }] } };
+    const m = analyze(base, snapTbd).matchup!;
+    expect(m.schedule_incomplete).toBe(true);
+    expect(m.assumptions[0]).toContain("TBD");
+    expect(analyze(base, withTeams({ HOU: 4, BOS: 3, DEN: 2 })).matchup!.schedule_incomplete).toBe(false);
+  });
+  test("each roster lists every player's games this week, who counts, and games left", () => {
+    const zeroSide = { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, fg3m: 0, tov: 0, fgm: 0, fga: 0, ftm: 0, fta: 0 };
+    const o = analyze({ ...base, matchup: { lineup_slots: 3, opponent: [{ name: "Nikola Jokic" }], so_far: { games_left: { HOU: 1, BOS: 2, DEN: 0 }, you: zeroSide, opponent: zeroSide } } }, withTeams({ HOU: 4, BOS: 3, DEN: 2 })).matchup!;
+    expect(o.rosters.you.length).toBeGreaterThan(0);
+    expect(o.rosters.you.filter((p) => p.counted).length).toBeLessThanOrEqual(3);
+    expect(o.rosters.opponent!.length).toBe(1);
+    expect(o.rosters.you.every((p) => typeof p.games_left === "number")).toBe(true);
+  });
   test("IL players and unmatched names are not counted, and the output says so", () => {
     const m = analyze({ ...base, roster: [...base.roster, { name: "Nobody Atall" }, { name: "Jayson Tatum", status: "IL" }] }, snapshot).matchup!;
     expect(m.assumptions.some((a) => a.includes("could not be matched"))).toBe(true);
@@ -172,7 +187,8 @@ describe("analyze: waiver and trade (D12)", () => {
   test("waiver ranks available players and reports whole percents and point deltas", () => {
     const o = analyze({ ...req, waiver: { ...common, candidates: [{ name: "Nikola Jokic" }, { name: "Nobody Atall" }], top: 3 } }, snap).waiver!;
     expect(Number.isInteger(o.baseline_week_win_pct)).toBe(true);
-    expect(o.moves.length).toBeGreaterThan(0);
+    expect(o.moves.length + o.not_ranked.length).toBeGreaterThan(0);
+    for (const m of o.moves) { expect(m.add_effect_points).toBeCloseTo(m.delta_points - m.drop_only_points, 0); expect(["high", "medium", "low", "none"]).toContain(m.add_confidence); }
     expect(o.names.some((n) => n.status === "not_found")).toBe(true);
     expect(o.assumptions.join(" ")).toContain("replacement-level");
   });
