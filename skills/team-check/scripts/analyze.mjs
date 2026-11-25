@@ -568,6 +568,60 @@ function simulateAny(me, opponents, codes, opts = {}) {
     distribution: dist.map((x) => x / weeks)
   };
 }
+function parseWeights(raw) {
+  const unknown = [], ratios = [];
+  const out = {};
+  for (const [name, w] of Object.entries(raw)) {
+    if (!Number.isFinite(w))
+      throw new Error(`scoring weight for ${name} must be a number`);
+    const code = ALIASES[norm(name)];
+    if (!code) {
+      unknown.push(name);
+      continue;
+    }
+    if (BY_CODE.get(code).den) {
+      ratios.push(name);
+      continue;
+    }
+    out[code] = (out[code] ?? 0) + w;
+  }
+  if (unknown.length)
+    throw new Error(`unsupported scoring stats: ${unknown.join(", ")}. Supported: ${SUPPORTED_CATEGORIES.join(" ")}`);
+  if (ratios.length)
+    throw new Error(`a points league cannot weight a percentage or ratio (${ratios.join(", ")}): weight the made and attempted counts instead`);
+  if (!Object.values(out).some((w) => w !== 0))
+    throw new Error("scoring needs at least one stat with a weight other than 0");
+  return out;
+}
+function pointsOf(w, t) {
+  let s = 0;
+  for (const c of Object.keys(w))
+    s += w[c] * categoryValue(c, t);
+  return s;
+}
+function simulatePoints(me, opponents, w, opts = {}) {
+  if (opponents.length === 0)
+    throw new Error("simulatePoints: no opponents");
+  const weeks = opts.weeks ?? DEFAULT_WEEKS;
+  const luck = opts.luck ?? true;
+  const rand = mulberry32(opts.seed ?? 1);
+  const g = gaussianFrom(rand);
+  const scale = luckScale(opts.slots ?? LUCK_REFERENCE_SLOTS);
+  const needDD = (w.DD ?? 0) !== 0, needTD = (w.TD ?? 0) !== 0;
+  const side = (a, s) => s ? s.banked + pointsOf(w, anyOutcome(s.remaining, luck && s.share > 0, g, rand, s.share > 0 ? scale / Math.sqrt(s.share) : scale, needDD, needTD)) : pointsOf(w, anyOutcome(a, luck, g, rand, scale, needDD, needTD));
+  let win = 0, tie = 0, sumMe = 0, sumOpp = 0;
+  for (let k = 0;k < weeks; k++) {
+    const opp = opponents[opponents.length === 1 ? 0 : Math.floor(rand() * opponents.length)];
+    const a = side(me, opts.progress?.me), b = side(opp, opts.progress?.opponent);
+    sumMe += a;
+    sumOpp += b;
+    if (a > b)
+      win++;
+    else if (a === b)
+      tie++;
+  }
+  return { weeks, weekWin: win / weeks, weekTie: tie / weeks, weekLoss: (weeks - win - tie) / weeks, expectedMe: sumMe / weeks, expectedOpponent: sumOpp / weeks };
+}
 function typicalAnyOpponents(players, settings, slots, gamesFor, opts = {}) {
   const { teams, rosterSpots } = settings;
   const poolSize = teams * rosterSpots;
@@ -759,26 +813,28 @@ function mixBaseline(a, b, w) {
     return [c, { mean: (1 - w) * x.mean + w * y.mean, std: (1 - w) * x.std + w * y.std, ...x.ratio !== undefined ? { ratio: (1 - w) * x.ratio + w * (y.ratio ?? x.ratio) } : {} }];
   }));
 }
-function estimateAll(snapshot, reference, current, codes, baseline) {
+function estimateAll(snapshot, reference, current, valueOf) {
   const out = new Map;
   for (const p of snapshot.players) {
     const e = estimateAverages(historyOf(p), reference, { current });
     if (!e.averages)
       continue;
     const base = baseOf(e.averages, []);
-    out.set(p.id, { id: p.id, name: p.name, averages: e.averages, team: p.team, value: anyValue(base, codes, baseline), confidence: e.confidence, effectiveGames: e.effectiveGames, base });
+    out.set(p.id, { id: p.id, name: p.name, averages: e.averages, team: p.team, value: valueOf(base), confidence: e.confidence, effectiveGames: e.effectiveGames, base });
   }
   return out;
 }
-var engineFor = (codes) => ({
+var engineFor = (codes, weights) => ({
   codes,
   totals: (list, gamesFor, slots) => anyTotals(list.map((p) => ({ base: p.base, games: gamesFor(p.team), value: p.value })), slots),
   simulate: (me, opps, o) => {
+    if (weights)
+      return { weekWin: simulatePoints(me, opps, weights, o).weekWin, categories: Object.fromEntries(codes.map((c) => [c, 0])) };
     const r = simulateAny(me, opps, codes, o);
     return { weekWin: r.weekWin, categories: r.categories };
   }
 });
-function analyzeAny(input, snapshot, codes) {
+function analyzeAny(input, snapshot, codes, weights) {
   const { teams, roster_spots } = input.league;
   requireData(snapshot, codes);
   const reference = input.reference ?? snapshot.reference_season;
@@ -796,19 +852,20 @@ function analyzeAny(input, snapshot, codes) {
   const refPool = seasonPool(reference), curPool = seasonPool(current);
   if (refPool.length < poolSize)
     throw new Error(`snapshot has only ${refPool.length} players for ${reference}; need at least ${poolSize}`);
-  let baseline = buildAnyBaseline(refPool, codes, poolSize);
+  let baseline = weights ? {} : buildAnyBaseline(refPool, codes, poolSize);
   const teamGames = input.team_games ?? curPool.reduce((m, p) => Math.max(m, p.gp), 0);
-  const w = curPool.length >= poolSize ? blendWeight(teamGames) : 0;
+  const w = !weights && curPool.length >= poolSize ? blendWeight(teamGames) : 0;
   if (w > 0)
     baseline = mixBaseline(baseline, buildAnyBaseline(curPool, codes, poolSize), w);
-  const estimated = estimateAll(snapshot, reference, current, codes, baseline);
+  const valueOf = weights ? (b) => pointsOf(weights, b) : (b) => anyValue(b, codes, baseline);
+  const estimated = estimateAll(snapshot, reference, current, valueOf);
   const pool = [...estimated.values()].sort((a, b) => b.value - a.value);
   if (pool.length < poolSize)
     throw new Error(`snapshot has only ${pool.length} players; need at least ${poolSize}`);
-  const engine = engineFor(codes);
+  const engine = engineFor(codes, weights);
   const seed = input.seed ?? 1;
   const assumptions = [
-    `This league scores ${codes.join(", ")}. Players are valued, and typical opponents drafted, on those categories only.`,
+    weights ? `This is a head-to-head points league. Points = ${Object.entries(weights).map(([c, x]) => `${x} x ${c}`).join(" + ")}. Players are valued, and typical opponents drafted, on fantasy points per game; the side with more points in the week wins.` : `This league scores ${codes.join(", ")}. Players are valued, and typical opponents drafted, on those categories only.`,
     `Players are estimated from their last three seasons, weighted by recency and games played. Positions are ignored. Week-to-week luck was measured on 2025-26 weekly results for each base stat (made and attempted shots, rebounds by kind, assists, steals, blocks, turnovers, fouls, minutes); double-doubles and triple-doubles are sampled game by game from each player's own rate.`,
     ...w > 0 ? [`League baseline: ${Math.round((1 - w) * 100)}% ${reference}, ${Math.round(w * 100)}% ${current} (season blend after ${teamGames} games).`] : []
   ];
@@ -821,7 +878,7 @@ function analyzeAny(input, snapshot, codes) {
   const myEntries = resolveList(input.roster, snapshot, estimated, names);
   const typical0 = typicalAnyOpponents(pool, { teams, rosterSpots: roster_spots }, slots0, gamesIn(wk0?.games ?? null), { leagues: 300, seed });
   const mine0 = anyTotals(myEntries.map((e) => ({ base: e.base, games: gamesIn(wk0?.games ?? null)(e.team), value: e.value })), slots0);
-  const ranking = codes.map((c) => {
+  const ranking = weights ? [] : codes.map((c) => {
     const mineV = categoryValue(c, mine0.t);
     const worse = typical0.filter((o) => isLowerCategory(c) ? categoryValue(c, o.t) > mineV : categoryValue(c, o.t) < mineV).length;
     const percentile = Math.round(100 * worse / typical0.length);
@@ -836,8 +893,13 @@ function analyzeAny(input, snapshot, codes) {
     ranking,
     assumptions
   };
+  if (weights) {
+    const mine = pointsOf(weights, mine0.t);
+    const percentile = Math.round(100 * typical0.filter((o) => pointsOf(weights, o.t) < mine).length / typical0.length);
+    out.points = { weights, expected_week_points: Math.round(mine * 10) / 10, percentile, band: band(percentile) };
+  }
   if (input.matchup)
-    out.matchup = runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thisMonday);
+    out.matchup = runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thisMonday, weights);
   if (input.waiver || input.trade) {
     const st = anyMoveSetup(input, snapshot, codes, estimated, pool, engine, seed);
     if (input.waiver)
@@ -890,7 +952,7 @@ var ZERO_BASE = () => ({
   dd: 0,
   td: 0
 });
-function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thisMonday) {
+function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thisMonday, weights) {
   const m = input.matchup;
   const { teams, roster_spots } = input.league;
   const slots = m.lineup_slots ?? roster_spots;
@@ -898,7 +960,7 @@ function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thi
     throw new Error("matchup.lineup_slots must be a whole number from 1 to 20");
   const assumptions = [];
   const sf = m.so_far;
-  const need = neededStats(codes);
+  const need = weights ? [] : neededStats(codes);
   if (sf) {
     if (!m.opponent || m.opponent.length === 0)
       throw new Error("matchup.so_far needs a real matchup.opponent");
@@ -908,6 +970,11 @@ function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thi
           throw new Error(`matchup.so_far.games_left: ${t} must be a whole number of games from 0 to 7`);
     } else if (!(sf.remaining_share >= 0 && sf.remaining_share <= 1))
       throw new Error("matchup.so_far needs games_left, or remaining_share between 0 and 1");
+    if (weights) {
+      for (const side of [sf.you, sf.opponent])
+        if (!(typeof side?.points === "number"))
+          throw new Error("matchup.so_far: points must be a number for both sides (this is a points league)");
+    }
     for (const side of [sf.you, sf.opponent])
       for (const k of need)
         if (!(typeof side?.[k] === "number" && side[k] >= 0))
@@ -976,10 +1043,13 @@ function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thi
   const weeks = m.weeks ?? DEFAULT_WEEKS;
   const bank = (b) => ({ ...ZERO_BASE(), ...Object.fromEntries(Object.entries(b).filter(([, v]) => typeof v === "number")) });
   const progress = sf && opp ? { me: { banked: bank(sf.you), remaining: me.remaining, share: me.share }, opponent: { banked: bank(sf.opponent), remaining: opp.remaining, share: opp.share } } : undefined;
-  const r = simulateAny(me.totals, opponents, codes, { weeks, seed: input.seed ?? 1, slots, ...progress ? { progress } : {} });
+  const simOpts = { weeks, seed: input.seed ?? 1, slots };
+  const pp = weights && sf && opp ? { me: { banked: sf.you.points, remaining: me.remaining, share: me.share }, opponent: { banked: sf.opponent.points, remaining: opp.remaining, share: opp.share } } : undefined;
+  const pr = weights ? simulatePoints(me.totals, opponents, weights, { ...simOpts, ...pp ? { progress: pp } : {} }) : undefined;
+  const r = pr ? { weekWin: pr.weekWin, weekTie: pr.weekTie, weekLoss: pr.weekLoss, categories: {}, distribution: [] } : simulateAny(me.totals, opponents, codes, { ...simOpts, ...progress ? { progress } : {} });
   if (sf)
     assumptions.push(sf.games_left ? `The week is under way: stats already banked are kept, and the games still to play (your lineup has ${Math.round(me.share * 100)}% of its week left, theirs ${Math.round(opp.share * 100)}%) are simulated from each player's own team games left. Games in progress or already counted by the league site must not be in the games left.` : `The week is under way: stats already banked are kept, and the remaining ${Math.round(sf.remaining_share * 100)}% of each team's games are simulated. Every player is assumed to have that same share of his week left, which is rough when a team's games are lopsided.`);
-  assumptions.push(`Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed. The simulation does not model injuries, lineup moves or streaming during the week. A week is won with more categories than the opponent; equal counts are a tie.`);
+  assumptions.push(`Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed. The simulation does not model injuries, lineup moves or streaming during the week. ${weights ? "The side with more fantasy points wins; equal points are a tie." : "A week is won with more categories than the opponent; equal counts are a tie."}`);
   const pct = (x) => Math.round(x * 100);
   return {
     week_start: week ? weekStart : null,
@@ -990,7 +1060,8 @@ function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thi
     weeks,
     so_far_counted: Boolean(sf),
     categories_used: codes,
-    categories: Object.fromEntries(codes.map((c) => [c, pct(r.categories[c])])),
+    categories: weights ? {} : Object.fromEntries(codes.map((c) => [c, pct(r.categories[c])])),
+    ...pr ? { expected_points: { you: Math.round(pr.expectedMe * 10) / 10, opponent: Math.round(pr.expectedOpponent * 10) / 10, margin: Math.round((pr.expectedMe - pr.expectedOpponent) * 10) / 10 } } : {},
     week_win_pct: pct(r.weekWin),
     week_tie_pct: pct(r.weekTie),
     week_loss_pct: pct(r.weekLoss),
@@ -1232,6 +1303,12 @@ function check(input) {
 }
 function analyzeLeague(input, snapshot) {
   check(input);
+  if (input.league.scoring && input.league.categories)
+    throw new Error("give league.categories or league.scoring, not both");
+  if (input.league.scoring) {
+    const w = parseWeights(input.league.scoring);
+    return analyzeAny(input, snapshot, Object.keys(w), w);
+  }
   if (input.league.categories) {
     const codes = parseCategories(input.league.categories);
     if (!isStandardNine(codes))

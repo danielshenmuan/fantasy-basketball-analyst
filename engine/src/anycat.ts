@@ -308,6 +308,65 @@ export function simulateAny(me: AnyTotals, opponents: AnyTotals[], codes: string
   };
 }
 
+// ---- points leagues ----------------------------------------------------------------------------------------------
+
+/** Stat weights by category code. A points league's score is the sum of weight x category total, so only counting categories qualify. */
+export type Weights = Record<string, number>;
+
+/** Turn the stat names and weights a host shows into code weights. Throws, naming every stat it does not know or cannot weigh. */
+export function parseWeights(raw: Record<string, number>): Weights {
+  const unknown: string[] = [], ratios: string[] = [];
+  const out: Weights = {};
+  for (const [name, w] of Object.entries(raw)) {
+    if (!Number.isFinite(w)) throw new Error(`scoring weight for ${name} must be a number`);
+    const code = ALIASES[norm(name)];
+    if (!code) { unknown.push(name); continue; }
+    if (BY_CODE.get(code)!.den) { ratios.push(name); continue; }
+    out[code] = (out[code] ?? 0) + w;
+  }
+  if (unknown.length) throw new Error(`unsupported scoring stats: ${unknown.join(", ")}. Supported: ${SUPPORTED_CATEGORIES.join(" ")}`);
+  if (ratios.length) throw new Error(`a points league cannot weight a percentage or ratio (${ratios.join(", ")}): weight the made and attempted counts instead`);
+  if (!Object.values(out).some((w) => w !== 0)) throw new Error("scoring needs at least one stat with a weight other than 0");
+  return out;
+}
+/** Fantasy points for a set of base totals. */
+export function pointsOf(w: Weights, t: BaseTotals): number {
+  let s = 0;
+  for (const c of Object.keys(w)) s += w[c]! * categoryValue(c, t);
+  return s;
+}
+
+export interface PointsSide { banked: number; remaining: AnyTotals; share: number }
+export interface PointsResult {
+  weeks: number; weekWin: number; weekTie: number; weekLoss: number;
+  /** Average simulated points for you and for the opponent(s), banked points included. */
+  expectedMe: number; expectedOpponent: number;
+}
+/** Head-to-head points: the side with more points in the week wins. Luck as in `simulateAny`. */
+export function simulatePoints(
+  me: AnyTotals, opponents: AnyTotals[], w: Weights,
+  opts: { weeks?: number; seed?: number; luck?: boolean; slots?: number; progress?: { me: PointsSide; opponent: PointsSide } } = {},
+): PointsResult {
+  if (opponents.length === 0) throw new Error("simulatePoints: no opponents");
+  const weeks = opts.weeks ?? DEFAULT_WEEKS;
+  const luck = opts.luck ?? true;
+  const rand = mulberry32(opts.seed ?? 1);
+  const g = gaussianFrom(rand);
+  const scale = luckScale(opts.slots ?? LUCK_REFERENCE_SLOTS);
+  const needDD = (w.DD ?? 0) !== 0, needTD = (w.TD ?? 0) !== 0;
+  const side = (a: AnyTotals, s: PointsSide | undefined): number =>
+    s ? s.banked + pointsOf(w, anyOutcome(s.remaining, luck && s.share > 0, g, rand, s.share > 0 ? scale / Math.sqrt(s.share) : scale, needDD, needTD))
+      : pointsOf(w, anyOutcome(a, luck, g, rand, scale, needDD, needTD));
+  let win = 0, tie = 0, sumMe = 0, sumOpp = 0;
+  for (let k = 0; k < weeks; k++) {
+    const opp = opponents[opponents.length === 1 ? 0 : Math.floor(rand() * opponents.length)]!;
+    const a = side(me, opts.progress?.me), b = side(opp, opts.progress?.opponent);
+    sumMe += a; sumOpp += b;
+    if (a > b) win++; else if (a === b) tie++;
+  }
+  return { weeks, weekWin: win / weeks, weekTie: tie / weeks, weekLoss: (weeks - win - tie) / weeks, expectedMe: sumMe / weeks, expectedOpponent: sumOpp / weeks };
+}
+
 export interface AnyDraftable { base: PlayerBase; team?: string; value: number }
 /** Typical opponents for a category list: simulated snake drafts as in `typicalOpponents`, ranked by the league's own category value. */
 export function typicalAnyOpponents(

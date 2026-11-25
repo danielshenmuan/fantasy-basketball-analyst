@@ -7,7 +7,7 @@ description: Weekly fantasy basketball head-to-head matchup for head-to-head cat
 
 Compares the user's roster with their real opponent's for one week. A script does all the math: your job is to collect the rosters accurately, run it, and explain the result in plain words.
 
-**Head-to-head category leagues with any mix of these categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO, plus FGM, FGA, FTM, FTA, 3PA, 3P%, OREB, DREB, PF, A/T, MIN, DD (double-doubles) and TD (triple-doubles)) are supported. Put the league's categories, exactly as the host names them, in `league.categories` of the request (for example `["Points","Rebounds","3-pointers made","Double-doubles"]`). Leave it out only for the standard nine. If a category is not on the list, the script stops and names it: say so plainly and do not approximate. A tie in the week is reported as a tie, not a win. Points leagues and roto are not supported yet.
+**Head-to-head category leagues with any mix of these categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO, plus FGM, FGA, FTM, FTA, 3PA, 3P%, OREB, DREB, PF, A/T, MIN, DD (double-doubles) and TD (triple-doubles)) are supported. Put the league's categories, exactly as the host names them, in `league.categories` of the request (for example `["Points","Rebounds","3-pointers made","Double-doubles"]`). Leave it out only for the standard nine. If a category is not on the list, the script stops and names it: say so plainly and do not approximate. A tie in the week is reported as a tie, not a win. Roto is not supported yet; points leagues use `league.scoring` (see below).
 
 This skill is read-only. Never ask for a password and never send adds, drops, trades or lineup changes.
 
@@ -91,3 +91,12 @@ When `league.categories` is not the standard nine, the result has `custom_catego
 - `matchup.categories` is keyed by the league's own category codes.
 - A week already under way needs `so_far` with `you` and `opponent` in base stats: made and attempted shots (`fgm`, `fga`, `ftm`, `fta`, `fg3m`, `fg3a`), `oreb`, `dreb`, `ast`, `stl`, `blk`, `turnovers`, `pf`, `minutes`, `dd`, `td`. Percentages and ratios are rebuilt from those, so read the made and attempted numbers, not the displayed percentage. Only the stats this league's categories use are required. The script names any that are missing.
 - If the script says the data file has no stat yet (for example `dd_rate`), report that plainly; the nightly update adds it.
+
+
+## Points leagues
+
+For a head-to-head points league, give `league.scoring` instead of `league.categories`: the stat names exactly as the host's scoring page shows them, each with its weight (negative for a penalty), for example `{"Points":1,"Rebounds":1.2,"Assists":1.5,"Steals":3,"Blocks":3,"Turnovers":-1,"Field goals made":0.5,"Field goals attempted":-0.5}`. Read the league's scoring settings page for these; do not guess. Never send both. The script stops and names any stat it does not track, and refuses a weight on a percentage or ratio (weight the made and attempted counts instead).
+- The result has `custom_categories: true` and a `points` block: the weights and where the user's expected week points sit among typical teams (percentile and band). There is no per-category ranking.
+- `matchup` gives `week_win_pct`, `week_tie_pct`, `week_loss_pct` and `expected_points` (you, opponent, margin). Say all three chances.
+- A week already under way needs `so_far` with `you.points`, `opponent.points` and `games_left` per team (as in a category league).
+- Games caps and minimum-games rules are not modelled; say so if the league has one.

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fx from "./fixtures/players-2025-26.json";
 import { analyzeLeague, analyze, type PlayerSeason, type Snapshot } from "../src";
+import { baseOf, parseWeights, pointsOf } from "../src/anycat";
 import type { AnyAnalyzeOutput } from "../src/analyzeAny";
 
 const fixture = fx.players as unknown as PlayerSeason[];
@@ -48,5 +49,42 @@ describe("analyzeLeague", () => {
       waiver: { candidates: [{ name: "Herb Jones" }, { name: "Gui Santos" }], weeks: 800 } as never,
     }, snapshot) as AnyAnalyzeOutput;
     expect(out.waiver).toBeDefined();
+  });
+});
+
+describe("points leagues", () => {
+  const scoring = { Points: 1, Rebounds: 1.2, Assists: 1.5, Steals: 3, Blocks: 3, Turnovers: -1, "Field goals made": 0.5, "Field goals attempted": -0.5 };
+  test("a player's points are the weighted sum of his stats", () => {
+    const w = parseWeights({ Points: 1, Rebounds: 1.2, Assists: 1.5, Steals: 3, Blocks: 3, Turnovers: -1 });
+    const b = baseOf({ pts: 30, reb: 10, ast: 5, stl: 2, blk: 1, fg3m: 3, fg_pct: 0.5, ft_pct: 0.8, turnovers: 3, fga: 20, fta: 6, fgm: 10, ftm: 5, oreb: 2, dreb: 8, pf: 2, fg3a: 8, min: 34 } as never, []);
+    // pts from makes: 2*10 + 3 + 5 = 28 (the fixture's pts differs); weights apply to the registry's PTS
+    expect(pointsOf(w, b)).toBeCloseTo(28 + 12 + 7.5 + 6 + 3 - 3, 6);
+  });
+  test("ratios cannot be weighted and unknown stats stop with their name", () => {
+    expect(() => parseWeights({ "Field goal percentage": 5 })).toThrow(/percentage or ratio/);
+    expect(() => parseWeights({ Points: 1, Deflections: 2 })).toThrow(/Deflections/);
+    expect(() => parseWeights({ Points: 0 })).toThrow();
+  });
+  test("a points league reports points, win and tie chances, deterministically", () => {
+    const run = () => analyzeLeague({ league: { ...league, scoring }, roster, matchup: { weeks: 1500 } }, snapshot) as AnyAnalyzeOutput;
+    const out = run();
+    expect(out.points!.percentile).toBeGreaterThanOrEqual(0);
+    const m = out.matchup!;
+    expect(m.expected_points!.you).toBeGreaterThan(0);
+    expect(m.week_win_pct + m.week_tie_pct + m.week_loss_pct).toBeGreaterThanOrEqual(99);
+    expect(run()).toEqual(out);
+  });
+  test("a lead already banked raises the win chance", () => {
+    const base = { league: { ...league, scoring }, roster, matchup: { weeks: 1500, opponent: [{ name: "Herb Jones" }, { name: "Gui Santos" }, { name: "Kevin Porter" }] } };
+    const go = (you: number, opp: number) => (analyzeLeague({ ...base, matchup: { ...base.matchup, so_far: { you: { points: you }, opponent: { points: opp }, games_left: {} } } } as never, snapshot) as AnyAnalyzeOutput).matchup!.week_win_pct;
+    expect(go(300, 100)).toBe(100);
+    expect(go(100, 300)).toBe(0);
+  });
+  test("waiver runs on a points league", () => {
+    const out = analyzeLeague({ league: { ...league, scoring }, roster, waiver: { candidates: [{ name: "Herb Jones" }, { name: "Gui Santos" }], weeks: 800 } as never }, snapshot) as AnyAnalyzeOutput;
+    expect(out.waiver).toBeDefined();
+  });
+  test("categories and scoring together are refused", () => {
+    expect(() => analyzeLeague({ league: { ...league, scoring, categories: ["Points"] }, roster }, snapshot)).toThrow(/not both/);
   });
 });

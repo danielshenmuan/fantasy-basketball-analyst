@@ -1,5 +1,5 @@
 import { analyzeAny, type AnyAnalyzeOutput } from "./analyzeAny";
-import { isStandardNine, parseCategories } from "./anycat";
+import { isStandardNine, parseCategories, parseWeights } from "./anycat";
 import { assessTeam, type RosterPlayer, type TeamAssessment } from "./assess";
 import { blendBaselines, blendWeight, buildBaseline } from "./baseline";
 import { categoryZ } from "./fantasyValue";
@@ -15,7 +15,7 @@ import { CATEGORIES, type Band, type Category, type PlayerSeason } from "./types
 
 export interface AnalyzeInput {
   /** `categories`: the league's scoring categories as the host names them ("Points", "3-pointers made", "Double-doubles"). Omit for the standard nine. */
-  league: { teams: number; roster_spots: number; categories?: string[] };
+  league: { teams: number; roster_spots: number; categories?: string[]; /** Head-to-head points league: the host's stat names and what each is worth (negative for a penalty). Use instead of `categories`. */ scoring?: Record<string, number> };
   roster: { name: string; status?: "IL" | "active" }[];
   /** Season for the league baseline; defaults to the snapshot's. */
   reference?: string;
@@ -185,6 +185,11 @@ function check(input: AnalyzeInput): void {
 /** The entry point: the standard nine take the original path, any other category list goes to the any-category engine. */
 export function analyzeLeague(input: AnalyzeInput, snapshot: Snapshot): AnalyzeOutput | AnyAnalyzeOutput {
   check(input);
+  if (input.league.scoring && input.league.categories) throw new Error("give league.categories or league.scoring, not both");
+  if (input.league.scoring) {
+    const w = parseWeights(input.league.scoring);
+    return analyzeAny(input, snapshot, Object.keys(w), w);
+  }
   if (input.league.categories) {
     const codes = parseCategories(input.league.categories);
     if (!isStandardNine(codes)) return analyzeAny(input, snapshot, codes);
