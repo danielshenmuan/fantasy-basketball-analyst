@@ -1,13 +1,13 @@
 ---
 name: team-check
-description: Fantasy basketball team health check for head-to-head 9-category leagues. Use when the user wants to know where their fantasy basketball team is strong or weak by category, how likely they are to win a typical week, or whether their roster is good. Takes a roster and league settings (from a saved league card or from the league site), compares the team with a simulated league, and returns elite / strong / neutral / weak for each category plus a win chance for each category and for the week. Works with any league host.
+description: Fantasy basketball team health check for head-to-head category leagues. Use when the user wants to know where their fantasy basketball team is strong or weak by category, how likely they are to win a typical week, or whether their roster is good. Takes a roster and league settings (from a saved league card or from the league site), compares the team with a simulated league, and returns elite / strong / neutral / weak for each category plus a win chance for each category and for the week. Works with any league host.
 ---
 
 # Fantasy basketball analyst
 
 Gives a category-by-category health check of a fantasy basketball roster. A script does all the math. Your job is to collect the inputs accurately, run it, and explain the result in plain language.
 
-Scope today: **9-category leagues** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO). Points leagues and other category sets are not supported; say so instead of approximating.
+**Head-to-head category leagues with any mix of these categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO, plus FGM, FGA, FTM, FTA, 3PA, 3P%, OREB, DREB, PF, A/T, MIN, DD (double-doubles) and TD (triple-doubles)) are supported. Put the league's categories, exactly as the host names them, in `league.categories` of the request (for example `["Points","Rebounds","3-pointers made","Double-doubles"]`). Leave it out only for the standard nine. If a category is not on the list, the script stops and names it: say so plainly and do not approximate. A tie in the week is reported as a tie, not a win. Points leagues and roto are not supported yet.
 
 ## What you need
 
@@ -26,7 +26,7 @@ Scope today: **9-category leagues** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO)
 
 Do not stop at the first failure: say why in a few words and try the next route. This skill is read-only. Never ask for a password, never type one, and never send adds, drops or trades.
 
-**Before running anything, show the user the players you read and the league settings, and ask them to confirm.** Misread names are the most likely source of a wrong answer. Also confirm the league is head-to-head with the standard nine categories; points leagues, roto leagues and other category sets are not supported, so say so instead of approximating. If fewer players are active than roster spots, ask whether someone is missing: an empty slot counts as an average player.
+**Before running anything, show the user the players you read and the league settings, and ask them to confirm.** Misread names are the most likely source of a wrong answer. Also confirm the league is head-to-head and read its category list; points and roto leagues are not supported yet, so say so instead of approximating. If fewer players are active than roster spots, ask whether someone is missing: an empty slot counts as an average player.
 
 ## Run the analysis
 
@@ -43,7 +43,7 @@ If the script cannot run at all (no Node, no file access), tell the user the ana
 
 ## Read the result
 
-- `ranking`: the nine categories from strongest to weakest, each with a band and a rounded percentile. Quote these, not the unrounded numbers elsewhere in the output.
+- `ranking`: the league's categories from strongest to weakest, each with a band and a rounded percentile. Quote these, not the unrounded numbers elsewhere in the output.
 - Bands compare the team with simulated leagues of the same size: **elite** (top 15%), **strong**, **neutral**, **weak** (bottom 40%).
 - `names`: how each typed name was read. For any `ambiguous` or `not_found` entry, **ask the user** which player they meant. Do not guess. Until clarified, that player counts as an average player.
 - `players`: each player's confidence. `none` means no usable NBA data, `low` means a small sample, and a player who missed last season is estimated from earlier seasons. A rookie, or anyone with no completed NBA season, is judged on this season's games alone (see the note on that player) and is always `low` until about 50 games. Mention these when they affect the answer.

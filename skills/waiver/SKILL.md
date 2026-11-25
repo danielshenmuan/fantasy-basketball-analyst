@@ -1,13 +1,13 @@
 ---
 name: waiver
-description: Fantasy basketball waiver-wire and streaming help for head-to-head 9-category leagues. Use when the user asks who to pick up, who to drop, whether a free agent is worth adding, or how to stream a roster spot. Reads the user's roster and the list of available players, then ranks each add (with the best drop) by how much it changes the user's weekly win chance, counting each player's real games from the NBA schedule.
+description: Fantasy basketball waiver-wire and streaming help for head-to-head category leagues. Use when the user asks who to pick up, who to drop, whether a free agent is worth adding, or how to stream a roster spot. Reads the user's roster and the list of available players, then ranks each add (with the best drop) by how much it changes the user's weekly win chance, counting each player's real games from the NBA schedule.
 ---
 
 # Fantasy basketball: pickups and drops
 
 Ranks available players by what adding each one does to the user's chance of winning a week. A script does all the math. Every number is a difference between two simulations of the same weeks, one with the move and one without. **Never recommend a move from your own judgment: only report what the script measured.**
 
-Only **head-to-head, standard 9-category** leagues are supported (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO). Say so for anything else; never approximate.
+**Head-to-head category leagues with any mix of these categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO, plus FGM, FGA, FTM, FTA, 3PA, 3P%, OREB, DREB, PF, A/T, MIN, DD (double-doubles) and TD (triple-doubles)) are supported. Put the league's categories, exactly as the host names them, in `league.categories` of the request (for example `["Points","Rebounds","3-pointers made","Double-doubles"]`). Leave it out only for the standard nine. If a category is not on the list, the script stops and names it: say so plainly and do not approximate. A tie in the week is reported as a tie, not a win. Points leagues and roto are not supported yet.
 
 This skill is read-only. Never ask for a password, and never make adds, drops or trades for the user.
 

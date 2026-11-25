@@ -1,13 +1,13 @@
 ---
 name: matchup
-description: Weekly fantasy basketball head-to-head matchup for 9-category leagues. Use when the user asks about this week's matchup, whether they will beat their opponent, or which categories they are likely to win or lose this week. Reads the user's roster and their opponent's roster, counts the real games each player has this week from the NBA schedule, and returns a win chance for each category and for the week.
+description: Weekly fantasy basketball head-to-head matchup for head-to-head category leagues. Use when the user asks about this week's matchup, whether they will beat their opponent, or which categories they are likely to win or lose this week. Reads the user's roster and their opponent's roster, counts the real games each player has this week from the NBA schedule, and returns a win chance for each category and for the week.
 ---
 
 # Fantasy basketball: this week's matchup
 
 Compares the user's roster with their real opponent's for one week. A script does all the math: your job is to collect the rosters accurately, run it, and explain the result in plain words.
 
-Only **head-to-head, standard 9-category** leagues are supported (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO). Say so for anything else; never approximate.
+**Head-to-head category leagues with any mix of these categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO, plus FGM, FGA, FTM, FTA, 3PA, 3P%, OREB, DREB, PF, A/T, MIN, DD (double-doubles) and TD (triple-doubles)) are supported. Put the league's categories, exactly as the host names them, in `league.categories` of the request (for example `["Points","Rebounds","3-pointers made","Double-doubles"]`). Leave it out only for the standard nine. If a category is not on the list, the script stops and names it: say so plainly and do not approximate. A tie in the week is reported as a tie, not a win. Points leagues and roto are not supported yet.
 
 This skill is read-only. Never ask for a password and never send adds, drops, trades or lineup changes.
 
@@ -83,3 +83,11 @@ Look at the `matchup` object:
 - **Do not suggest moves** (pickups, drops, trades, which category to give up) as your own judgment. If the user asks what to do, point them to the `waiver` skill (pickups and drops) or the `trade` skill, which measure a move. Giving up a category is not measured yet: say so, and give the measured picture instead.
 - Use plain words. Do not mention z-scores or an internal score.
 - This is entertainment and strategy help. It is not betting or financial advice.
+
+## Custom category lists
+
+When `league.categories` is not the standard nine, the result has `custom_categories: true` and these differences apply:
+- `matchup.week_win_pct`, `week_tie_pct` and `week_loss_pct` are reported separately. Say all three; a tie is not a win.
+- `matchup.categories` is keyed by the league's own category codes.
+- A week already under way needs `so_far` with `you` and `opponent` in base stats: made and attempted shots (`fgm`, `fga`, `ftm`, `fta`, `fg3m`, `fg3a`), `oreb`, `dreb`, `ast`, `stl`, `blk`, `turnovers`, `pf`, `minutes`, `dd`, `td`. Percentages and ratios are rebuilt from those, so read the made and attempted numbers, not the displayed percentage. Only the stats this league's categories use are required. The script names any that are missing.
+- If the script says the data file has no stat yet (for example `dd_rate`), report that plainly; the nightly update adds it.

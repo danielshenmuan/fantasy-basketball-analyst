@@ -37,7 +37,7 @@ Do not stop at the first failure. If a route fails, say why in a few words and t
 Read the whole settings page, not just the roster size. Write down what is there and leave out what the league does not have.
 
 **Scoring** (read first)
-- Category league, points league, or roto. The analysis supports only **head-to-head, standard 9 categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO). If the league is points, roto or a different category list, say so plainly, still save the profile, and stop there. Do not approximate.
+- Category league, points league, or roto. The analysis supports **head-to-head category leagues with any mix of the supported categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO, plus FGM, FGA, FTM, FTA, 3PA, 3P%, OREB, DREB, PF, A/T, MIN, DD (double-doubles) and TD (triple-doubles)). Copy the league's category names exactly as the host shows them; they go in the card and in `league.categories` of every request. Ask how a tied week counts (a tie, or a tiebreaker category) and record it. If the league is points or roto, or uses a category not on the list, say so plainly, still save the profile, and stop there. Do not approximate.
 - The category list and how many there are; whether a week is won by most categories.
 
 **Structure**
@@ -83,6 +83,7 @@ Host: Yahoo
 League: Example League (id 12345)
 Team: My Team
 Format: head-to-head, 9 categories (PTS REB AST STL BLK 3PM FG% FT% TO)
+Tie rule: equal categories won = a tied week
 Teams: 14   Starters: 10   Bench: 3   IL: 4
 Lineup: daily   Weekly adds: 4   Matchup: 1 week
 Playoffs: 8 teams, from week 21, 3 weeks
@@ -108,7 +109,8 @@ If you can write files (Claude Code, Cowork), also save the same facts as JSON t
   "starters": 10,
   "bench_spots": 3,
   "il_slots": 4,
-  "categories": "9cat",
+  "categories": ["Points", "Rebounds", "Assists", "Steals", "Blocks", "3-pointers made", "Field goal percentage", "Free throw percentage", "Turnovers"],
+  "tie_rule": "tied week",
   "format": "h2h",
   "lineup": "daily",
   "weekly_add_limit": 4,

@@ -1,13 +1,13 @@
 ---
 name: trade
-description: Fantasy basketball trade help for head-to-head 9-category leagues. Use when the user has a trade offer to evaluate, wants to know whether a trade helps them, or wants trade ideas with another team. Scores a trade by how it changes the user's weekly win chance (and the other team's, when their roster is known), counting each player's real games from the NBA schedule, and can search one-for-one offers that help the user without hurting the other team.
+description: Fantasy basketball trade help for head-to-head category leagues. Use when the user has a trade offer to evaluate, wants to know whether a trade helps them, or wants trade ideas with another team. Scores a trade by how it changes the user's weekly win chance (and the other team's, when their roster is known), counting each player's real games from the NBA schedule, and can search one-for-one offers that help the user without hurting the other team.
 ---
 
 # Fantasy basketball: trades
 
 Scores trades by what they do to a team's chance of winning a week. A script does all the math. Every number is a difference between two simulations of the same weeks, one with the trade and one without. **Never judge a trade from your own opinion: only report what the script measured.**
 
-Only **head-to-head, standard 9-category** leagues are supported (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO). Say so for anything else; never approximate.
+**Head-to-head category leagues with any mix of these categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO, plus FGM, FGA, FTM, FTA, 3PA, 3P%, OREB, DREB, PF, A/T, MIN, DD (double-doubles) and TD (triple-doubles)) are supported. Put the league's categories, exactly as the host names them, in `league.categories` of the request (for example `["Points","Rebounds","3-pointers made","Double-doubles"]`). Leave it out only for the standard nine. If a category is not on the list, the script stops and names it: say so plainly and do not approximate. A tie in the week is reported as a tie, not a win. Points leagues and roto are not supported yet.
 
 This skill is read-only. Never ask for a password, never propose or accept a trade in the league for the user, and never send messages for them.
 
