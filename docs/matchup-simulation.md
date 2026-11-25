@@ -50,3 +50,7 @@ A move is scored by re-running the same simulated weeks with the roster changed.
 - **Empty lineup spots** are filled by a replacement-level player (the last player a league of this size would draft).
 
 Everything here is a difference between two simulations. Skills must not add advice that was not measured.
+
+## Back-test: does a quoted 60% win 60% of the time?
+
+Measured on 18 real weeks of 2025-26 (issue #9; full tables in `docs/calibration.md`, script `engine/scripts/calibration-backtest.ts`). Quotes with each team's real schedule game counts are **overconfident in the tails**: a quoted 90-100% won about 81%, 80-90% won 70%, 70-80% won 61%; quotes of 40-60% are fine (calibration slope 0.61; Brier 0.235 against 0.250 for a coin flip). With the games players really played, the same model is nearly calibrated (slope 0.94), so the luck table is about right and the gap comes from injuries and rest, which the model does not include. Custom category lists and points leagues behave the same. Until that is addressed, treat quotes above about 80% or below about 20% as less certain than they look.
