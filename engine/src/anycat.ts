@@ -318,12 +318,18 @@ const MISSED: Record<string, { att: string; made: string }> = {};
 for (const [att, made, ...names] of [["FGA", "FGM", "Field goals missed", "Missed field goals", "FG missed", "FGMISS"], ["FTA", "FTM", "Free throws missed", "Missed free throws", "FT missed", "FTMISS"], ["3PA", "3PM", "3-pointers missed", "Missed 3-pointers", "3P missed", "3PMISS"]] as [string, string, ...string[]][])
   for (const n of names) MISSED[norm(n)] = { att: att!, made: made! };
 
+/** Rare events we have no data for. A weight on one is left out of the model (their effect is about 0.4% of a week's score); the output says so. */
+const UNTRACKED = new Set(["technical fouls", "flagrant fouls", "ejections", "quadruple doubles", "quadruple-doubles", "technical foul", "flagrant foul", "ejection", "quad doubles", "quad-doubles"].map((n) => norm(n)));
+/** The names in a scoring list that parseWeights leaves out because we do not track them. */
+export const untrackedScoring = (raw: Record<string, number>): string[] => Object.keys(raw).filter((n) => UNTRACKED.has(norm(n)));
+
 /** Turn the stat names and weights a host shows into code weights. Throws, naming every stat it does not know or cannot weigh. */
 export function parseWeights(raw: Record<string, number>): Weights {
   const unknown: string[] = [], ratios: string[] = [];
   const out: Weights = {};
   for (const [name, w] of Object.entries(raw)) {
     if (!Number.isFinite(w)) throw new Error(`scoring weight for ${name} must be a number`);
+    if (UNTRACKED.has(norm(name))) continue;
     const missed = MISSED[norm(name)];
     if (missed) { out[missed.att] = (out[missed.att] ?? 0) + w; out[missed.made] = (out[missed.made] ?? 0) - w; continue; }
     const code = ALIASES[norm(name)];

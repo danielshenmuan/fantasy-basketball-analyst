@@ -1,5 +1,5 @@
 import { analyzeAny, type AnyAnalyzeOutput } from "./analyzeAny";
-import { isStandardNine, parseCategories, parseWeights } from "./anycat";
+import { isStandardNine, parseCategories, parseWeights, untrackedScoring } from "./anycat";
 import { assessTeam, type RosterPlayer, type TeamAssessment } from "./assess";
 import { blendBaselines, blendWeight, buildBaseline } from "./baseline";
 import { categoryZ } from "./fantasyValue";
@@ -188,7 +188,10 @@ export function analyzeLeague(input: AnalyzeInput, snapshot: Snapshot): AnalyzeO
   if (input.league.scoring && input.league.categories) throw new Error("give league.categories or league.scoring, not both");
   if (input.league.scoring) {
     const w = parseWeights(input.league.scoring);
-    return analyzeAny(input, snapshot, Object.keys(w), w);
+    const out = analyzeAny(input, snapshot, Object.keys(w), w);
+    const skipped = untrackedScoring(input.league.scoring);
+    if (skipped.length) out.assumptions.push(`NOT SCORED: ${skipped.join(", ")}. We have no data for these rare events (about 0.4% of a typical week's points), so they are left out of every number here.`);
+    return out;
   }
   if (input.league.categories) {
     const codes = parseCategories(input.league.categories);

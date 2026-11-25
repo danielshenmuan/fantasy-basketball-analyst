@@ -64,4 +64,5 @@ For a head-to-head points league, give `league.scoring` instead of `league.categ
 - The result has `custom_categories: true` and a `points` block: the weights and where the user's expected week points sit among typical teams (percentile and band). There is no per-category ranking.
 - `matchup` gives `week_win_pct`, `week_tie_pct`, `week_loss_pct` and `expected_points` (you, opponent, margin). Say all three chances.
 - A week already under way needs `so_far` with `you.points`, `opponent.points` and `games_left` per team (as in a category league).
+- Technical fouls, flagrant fouls, ejections and quad-doubles are not tracked: put them in `league.scoring` anyway and the script leaves them out and says `NOT SCORED` in `assumptions`. Tell the user.
 - Games caps and minimum-games rules are not modelled; say so if the league has one.

@@ -95,3 +95,12 @@ describe("missed shots in scoring", () => {
     expect(parseWeights({ "3-pointers missed": -1, "3-pointers made": 2 })).toEqual({ "3PA": -1, "3PM": 3 });
   });
 });
+
+describe("untracked scoring stats", () => {
+  test("technical fouls, flagrants, ejections and quad-doubles are left out with a notice", () => {
+    const sc = { Points: 1, "Technical fouls": -3, Ejections: -5, "Quadruple-doubles": 20 };
+    expect(parseWeights(sc)).toEqual({ PTS: 1 });
+    const out = analyzeLeague({ league: { ...league, scoring: sc }, roster }, snapshot) as AnyAnalyzeOutput;
+    expect(out.assumptions.some((a) => a.startsWith("NOT SCORED: Technical fouls, Ejections, Quadruple-doubles"))).toBe(true);
+  });
+});
