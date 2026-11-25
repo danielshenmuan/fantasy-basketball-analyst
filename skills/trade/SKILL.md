@@ -50,6 +50,7 @@ Look at the `trade` object:
 - `other_team`: the same for the other side, when their roster was given.
 - `offers` (search mode): one-for-one swaps that raise your weekly win chance without lowering theirs, best for the user first, each with both sides' numbers.
 - `games_source`: `schedule` means real game counts; `assumed` means an average week for everyone, so say the numbers are rougher.
+- `schedule_incomplete`: true means a week still has NBA games with a team to be announced, so some game counts may be low. Say so before quoting numbers.
 - `names`: for any `ambiguous` or `not_found` player, ask which player was meant. Do not guess. A trade involving someone the user does not have is rejected.
 - `assumptions`: include the important ones.
 

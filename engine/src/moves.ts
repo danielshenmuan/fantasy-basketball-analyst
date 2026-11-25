@@ -12,6 +12,8 @@ export interface Entry {
   id: number; name: string; averages: SeasonAverages; team?: string; value: number;
   /** How much history the estimate rests on (from estimateAverages). */
   confidence?: "high" | "medium" | "low" | "none";
+  /** Games of history the estimate rests on (recency-weighted, capped per season). */
+  effectiveGames?: number;
 }
 
 /** One scheduled week: games per team and the opponents the roster is simulated against. */
@@ -60,7 +62,8 @@ export interface Move {
   addDelta: number;
   categoryDelta: Record<Category, number>;
 }
-export interface Unranked { add: Entry; reason: "bench-only" | "no-gain-from-add" }
+/** bench-only: would not enter the lineup. no-gain-from-add: enters, but adds nothing beyond the drop. below-top: ranked worse than the moves shown. */
+export interface Unranked { add: Entry; reason: "bench-only" | "no-gain-from-add" | "below-top" }
 
 /** Does `entry` count in the lineup of `roster` (padded with the replacement player like scoreRoster)? Same pick as weeklyTotals. */
 export function entersLineup(roster: Entry[], entry: Entry, env: MoveEnv): boolean {
@@ -82,10 +85,16 @@ export function rankWaiverMoves(
   const droppable = opts.droppable ?? roster;
   const top = opts.top ?? 8;
   const quick = opts.quickWeeks ?? Math.min(env.simWeeks, 3000);
-  const base = scoreRoster(roster, env, quick);
   const without = (drop: Entry) => roster.filter((p) => p.id !== drop.id);
   const unranked: Unranked[] = [];
-  const best: { add: Entry; drop: Entry; win: number }[] = [];
+  // Weekly win chance of dropping each player alone, at the quick length (shared by every candidate).
+  const dropOnlyQuick = new Map<number, number>();
+  const dropOnlyAt = (drop: Entry, weeks: number, cache: Map<number, number>) => {
+    if (!cache.has(drop.id)) cache.set(drop.id, scoreRoster(without(drop), env, weeks).weekWin);
+    return cache.get(drop.id)!;
+  };
+  // Each candidate that would enter the lineup, with the drop that serves it best.
+  const picks: { add: Entry; drop: Entry; win: number; addGain: number }[] = [];
   for (const add of candidates) {
     let pick: { add: Entry; drop: Entry; win: number } | null = null;
     for (const drop of droppable) {
@@ -94,22 +103,26 @@ export function rankWaiverMoves(
       const win = scoreRoster(next, env, quick).weekWin;
       if (!pick || win > pick.win || (win === pick.win && drop.value < pick.drop.value)) pick = { add, drop, win };
     }
-    if (pick) best.push(pick);
-    else unranked.push({ add, reason: "bench-only" });
+    if (!pick) { unranked.push({ add, reason: "bench-only" }); continue; }
+    const addGain = pick.win - dropOnlyAt(pick.drop, quick, dropOnlyQuick);
+    if (addGain <= 0) { unranked.push({ add, reason: "no-gain-from-add" }); continue; }
+    picks.push({ ...pick, addGain });
   }
-  best.sort((a, b) => b.win - a.win);
+  // Rank by what the add contributes, then re-score the best few at full length so the reported numbers are steady.
+  picks.sort((a, b) => b.addGain - a.addGain);
   const baseline = scoreRoster(roster, env);
-  const dropOnly = new Map<number, number>();
+  const dropOnlyFull = new Map<number, number>();
   const moves: Move[] = [];
-  for (const { add, drop } of best.slice(0, top * 2)) {
-    if (!dropOnly.has(drop.id)) dropOnly.set(drop.id, scoreRoster(without(drop), env).weekWin);
+  for (const { add, drop } of picks) {
+    if (moves.length >= top) { unranked.push({ add, reason: "below-top" }); continue; }
     const after = scoreRoster(without(drop).concat(add), env);
-    const addDelta = after.weekWin - dropOnly.get(drop.id)!;
+    const only = dropOnlyAt(drop, env.simWeeks, dropOnlyFull);
+    const addDelta = after.weekWin - only;
     if (addDelta <= 0) { unranked.push({ add, reason: "no-gain-from-add" }); continue; }
-    moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: dropOnly.get(drop.id)! - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline) });
+    moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: only - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline) });
   }
   moves.sort((a, b) => b.addDelta - a.addDelta);
-  return { baseline, moves: moves.slice(0, top), unranked };
+  return { baseline, moves, unranked };
 }
 
 export interface TradeResult { before: Score; after: Score; delta: number; categoryDelta: Record<Category, number> }

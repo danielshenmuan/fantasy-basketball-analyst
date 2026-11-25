@@ -80,6 +80,6 @@ Look at the `matchup` object:
 
 - Lead with the weekly win chance, then the categories that decide it: the closest ones and the clear wins and losses. Describe a 50% category as a toss-up.
 - A win chance is not a prediction. It is the share of simulated weeks in which the rosters, as they stand, win. It does not model injuries, rest days, lineup moves or streaming during the week.
-- **Do not suggest moves** (pickups, drops, trades, which category to give up) as your own judgment. If the user asks what to do, say that this recommendation is not available yet because it has to be measured, and give the measured picture instead.
+- **Do not suggest moves** (pickups, drops, trades, which category to give up) as your own judgment. If the user asks what to do, point them to the `waiver` skill (pickups and drops) or the `trade` skill, which measure a move. Giving up a category is not measured yet: say so, and give the measured picture instead.
 - Use plain words. Do not mention z-scores or an internal score.
 - This is entertainment and strategy help. It is not betting or financial advice.

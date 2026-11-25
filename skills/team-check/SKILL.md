@@ -55,7 +55,7 @@ If the script cannot run at all (no Node, no file access), tell the user the ana
 
 - Lead with the picture: the categories the team is built to win, the categories it is losing, and the weekly win chance. Use the bands for strength and the percents from `matchup` for win chances. Do not mention z-scores or an internal score.
 - To say which players drive a category, you may use each player's per-category values in `players` to rank them, but describe it in words ("Jokic and Sengun carry your rebounds"). Never quote those numbers.
-- **Everything you say about strategy must be measured, never your own judgment.** Do not recommend punting a category, a build, a pickup, a drop or a trade. If the user asks, say that this recommendation is not available yet because it has to be measured (it needs the waiver and trade tools), and give the measured picture instead. Do not describe a category as "cheap to fix" or "easiest to win" unless a number in the result says it.
+- **Everything you say about strategy must be measured, never your own judgment.** Do not recommend punting a category, a build, a pickup, a drop or a trade. If the user asks, point them to the `waiver` or `trade` skill, which score a specific pickup, drop or trade by what it does to the weekly win chance. Punting or giving up a category is not measured yet: say so, and give the measured picture instead. Do not describe a category as "cheap to fix" or "easiest to win" unless a number in the result says it.
 - Be honest that this is an estimate from past seasons: it does not model injuries, role changes, rest days or daily lineup limits.
 - This is entertainment and strategy help. It is not betting or financial advice.
 

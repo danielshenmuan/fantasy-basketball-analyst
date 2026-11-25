@@ -8,7 +8,7 @@ It turns your league's rosters into plain answers: where your team is strong and
 
 ## Layout
 
-- `engine/`: TypeScript engine (league baselines, simulated-league benchmark, team assessment) with tests. `bun test` runs them; `bun run build` writes the single-file script below. It also holds the weekly head-to-head matchup simulation (not yet exposed in a skill).
+- `engine/`: TypeScript engine (league baselines, simulated-league benchmark, team assessment) with tests. `bun test` runs them; `bun run build` writes the single-file script below. It also holds the weekly head-to-head matchup simulation and move scoring, used by the `matchup`, `waiver` and `trade` skills.
 - `skills/`: the agent skills, packaged as one Claude plugin (`.claude-plugin/`). `setup` reads a league and saves a league card; `team-check` is the category health check (`scripts/analyze.mjs` is the engine bundled into one dependency-free file that runs on Node). `matchup`, `waiver` and `trade` score a move by what it does to your weekly win chance.
 
 ## What it will do

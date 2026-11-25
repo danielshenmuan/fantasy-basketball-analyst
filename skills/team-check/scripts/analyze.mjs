@@ -521,10 +521,15 @@ function rankWaiverMoves(roster, candidates, env, opts = {}) {
   const droppable = opts.droppable ?? roster;
   const top = opts.top ?? 8;
   const quick = opts.quickWeeks ?? Math.min(env.simWeeks, 3000);
-  const base = scoreRoster(roster, env, quick);
   const without = (drop) => roster.filter((p) => p.id !== drop.id);
   const unranked = [];
-  const best = [];
+  const dropOnlyQuick = new Map;
+  const dropOnlyAt = (drop, weeks, cache) => {
+    if (!cache.has(drop.id))
+      cache.set(drop.id, scoreRoster(without(drop), env, weeks).weekWin);
+    return cache.get(drop.id);
+  };
+  const picks = [];
   for (const add of candidates) {
     let pick = null;
     for (const drop of droppable) {
@@ -535,28 +540,37 @@ function rankWaiverMoves(roster, candidates, env, opts = {}) {
       if (!pick || win > pick.win || win === pick.win && drop.value < pick.drop.value)
         pick = { add, drop, win };
     }
-    if (pick)
-      best.push(pick);
-    else
+    if (!pick) {
       unranked.push({ add, reason: "bench-only" });
+      continue;
+    }
+    const addGain = pick.win - dropOnlyAt(pick.drop, quick, dropOnlyQuick);
+    if (addGain <= 0) {
+      unranked.push({ add, reason: "no-gain-from-add" });
+      continue;
+    }
+    picks.push({ ...pick, addGain });
   }
-  best.sort((a, b) => b.win - a.win);
+  picks.sort((a, b) => b.addGain - a.addGain);
   const baseline = scoreRoster(roster, env);
-  const dropOnly = new Map;
+  const dropOnlyFull = new Map;
   const moves = [];
-  for (const { add, drop } of best.slice(0, top * 2)) {
-    if (!dropOnly.has(drop.id))
-      dropOnly.set(drop.id, scoreRoster(without(drop), env).weekWin);
+  for (const { add, drop } of picks) {
+    if (moves.length >= top) {
+      unranked.push({ add, reason: "below-top" });
+      continue;
+    }
     const after = scoreRoster(without(drop).concat(add), env);
-    const addDelta = after.weekWin - dropOnly.get(drop.id);
+    const only = dropOnlyAt(drop, env.simWeeks, dropOnlyFull);
+    const addDelta = after.weekWin - only;
     if (addDelta <= 0) {
       unranked.push({ add, reason: "no-gain-from-add" });
       continue;
     }
-    moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: dropOnly.get(drop.id) - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline) });
+    moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: only - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline) });
   }
   moves.sort((a, b) => b.addDelta - a.addDelta);
-  return { baseline, moves: moves.slice(0, top), unranked };
+  return { baseline, moves, unranked };
 }
 function evaluateTrade(roster, give, get, env) {
   const giveIds = new Set(give.map((p) => p.id));
@@ -796,7 +810,7 @@ function estimatePlayers(snapshot, reference, currentSeason, baseline) {
     if (!e.averages)
       continue;
     const z = categoryZ(e.averages, baseline);
-    out.set(p.id, { id: p.id, name: p.name, averages: e.averages, team: p.team, value: CATEGORIES.reduce((t, c) => t + z[c], 0), confidence: e.confidence });
+    out.set(p.id, { id: p.id, name: p.name, averages: e.averages, team: p.team, value: CATEGORIES.reduce((t, c) => t + z[c], 0), confidence: e.confidence, effectiveGames: e.effectiveGames });
   }
   return out;
 }
@@ -826,7 +840,7 @@ function moveSetup(input, common, snapshot, reference, currentSeason, baseline) 
     if (w.tbd_slots)
       assumptions.push(`WARNING: ${w.tbd_slots} game slot(s) in the week of ${w.start} are still "TBD" in the NBA schedule, so some teams' game counts may be too low.`);
   assumptions.push(gamesSource === "schedule" ? `Averaged over ${weeks.length} week(s) starting ${weeks[0].start}, counting each player's real games from the NBA schedule.` : `No schedule in the data, so every player gets an average week of ${DEFAULT_WEEK_GAMES} games.`, `Each score is a weekly win chance against typical opponents (${weeks[0].opponents.length} teams from simulated ${teams}-team drafts, positions ignored), ${simWeeks} simulated weeks with a fixed seed. ` + `A move is scored by re-running the same weeks with the roster changed, so the difference is the move's effect. Injuries, rest days and lineup moves during the week are not modelled. An empty lineup spot is filled by a replacement-level player.`);
-  return { env: { slots, weeks, simWeeks, seed, replacement }, estimated, weeksUsed: weeks.map((w) => w.start ?? "assumed"), gamesSource, assumptions };
+  return { env: { slots, weeks, simWeeks, seed, replacement }, estimated, weeksUsed: weeks.map((w) => w.start ?? "assumed"), gamesSource, scheduleIncomplete: scheduled.some((w) => (w.tbd_slots ?? 0) > 0), assumptions };
 }
 function resolveList(list, snapshot, estimated, names, suffix = "") {
   const out = [];
@@ -869,6 +883,7 @@ function runWaiver(input, snapshot, reference, currentSeason, baseline) {
   return {
     weeks_used: st.weeksUsed,
     games_source: st.gamesSource,
+    schedule_incomplete: st.scheduleIncomplete,
     baseline_week_win_pct: Math.round(base.weekWin * 100),
     moves: moves.map((m) => ({
       add: m.add.name,
@@ -878,6 +893,7 @@ function runWaiver(input, snapshot, reference, currentSeason, baseline) {
       drop_only_points: pct1(m.dropOnlyDelta),
       add_effect_points: pct1(m.addDelta),
       add_confidence: m.add.confidence ?? "none",
+      add_games_basis: Math.round(m.add.effectiveGames ?? 0),
       categories_delta_points: catDelta(m.categoryDelta)
     })),
     not_ranked: unranked.map((u) => ({ add: u.add.name, reason: u.reason })),
@@ -893,7 +909,7 @@ function runTrade(input, snapshot, reference, currentSeason, baseline) {
   const theirs = t.other_roster ? resolveList(t.other_roster, snapshot, st.estimated, names, " (other team)") : [];
   if (mine.length === 0)
     throw new Error("none of the roster players could be matched");
-  const base = { weeks_used: st.weeksUsed, games_source: st.gamesSource, names };
+  const base = { weeks_used: st.weeksUsed, games_source: st.gamesSource, schedule_incomplete: st.scheduleIncomplete, names };
   if (t.search) {
     if (theirs.length === 0)
       throw new Error("trade.search needs trade.other_roster");

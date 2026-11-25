@@ -45,7 +45,7 @@ One luck number per category ignores that some rosters swing more than others (a
 
 A move is scored by re-running the same simulated weeks with the roster changed. The random draws are identical, so the difference in weekly win chance is the move's effect, not noise.
 
-- **Waiver:** for each available player, try every drop and keep the one that helps most; rank adds by the gain in weekly win chance, averaged over the next two weeks of the schedule. The reported numbers for the top moves are re-scored at full length.
+- **Waiver:** for each available player, try every drop and keep the one that helps most; rank adds by what the added player contributes beyond the drop, averaged over the next two weeks of the schedule. A candidate who would not enter the lineup (`bench-only`), or whose gain is only the drop (`no-gain-from-add`), is not ranked: dropping a player alone changes the week, and that effect would otherwise be credited to whoever is added. Candidates ranked below the number shown are listed as `below-top`, so none disappears. Each move reports the total change, the drop-only change and the add's own effect, and the data behind the add's estimate. The reported numbers for the top moves are re-scored at full length. When a week in the schedule still has games with a team to be announced (`TBD`), output carries `schedule_incomplete` and a warning: some teams' game counts may be low.
 - **Trade:** remove the players given, add the players received, compare. With the other team's roster, the same for their side. Search tries every one-for-one swap and keeps those that help you without hurting them.
 - **Empty lineup spots** are filled by a replacement-level player (the last player a league of this size would draft).
 

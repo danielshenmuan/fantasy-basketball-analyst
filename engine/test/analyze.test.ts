@@ -188,7 +188,8 @@ describe("analyze: waiver and trade (D12)", () => {
     const o = analyze({ ...req, waiver: { ...common, candidates: [{ name: "Nikola Jokic" }, { name: "Nobody Atall" }], top: 3 } }, snap).waiver!;
     expect(Number.isInteger(o.baseline_week_win_pct)).toBe(true);
     expect(o.moves.length + o.not_ranked.length).toBeGreaterThan(0);
-    for (const m of o.moves) { expect(m.add_effect_points).toBeCloseTo(m.delta_points - m.drop_only_points, 0); expect(["high", "medium", "low", "none"]).toContain(m.add_confidence); }
+    for (const m of o.moves) { expect(m.add_effect_points).toBeCloseTo(m.delta_points - m.drop_only_points, 0); expect(["high", "medium", "low", "none"]).toContain(m.add_confidence); expect(m.add_games_basis).toBeGreaterThanOrEqual(0); }
+    expect(typeof o.schedule_incomplete).toBe("boolean");
     expect(o.names.some((n) => n.status === "not_found")).toBe(true);
     expect(o.assumptions.join(" ")).toContain("replacement-level");
   });

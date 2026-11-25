@@ -68,6 +68,26 @@ describe("rankWaiverMoves", () => {
     expect(r.moves.length).toBe(0);
     expect(r.unranked.map((u) => u.reason).sort()).toEqual(["bench-only", "bench-only"]);
   });
+  test("every candidate is accounted for: ranked or listed with a reason", () => {
+    const deep = [...lineup(10, {}, "d"), ...lineup(3, { pts: 6, reb: 2 }, "b")];
+    const cands = [good, bad, entry("mid", { pts: 19, reb: 7, ast: 4 }, 14), entry("benchX", { pts: 5 }, -6)];
+    const r = rankWaiverMoves(deep, cands, env, { top: 1 });
+    expect(r.moves.length + r.unranked.length).toBe(cands.length);
+    expect(r.unranked.some((u) => u.reason === "below-top")).toBe(true);
+  });
+  test("ranks by the add's own effect: a bench add never outranks a lineup add on drop-driven gain", () => {
+    const deep = [...lineup(10, {}, "d"), entry("hurts", { pts: 12, turnovers: 5, fg_pct: 0.38, fgm: 4.2, ft_pct: 0.6, ftm: 1.8 }, 9.5), ...lineup(3, { pts: 6, reb: 2 }, "b")];
+    const r = rankWaiverMoves(deep, [entry("benchA", { pts: 7 }, -3), good], env);
+    expect(r.moves.map((m) => m.add.name)).toEqual(["good"]);
+    expect(r.moves[0]!.addDelta).toBeGreaterThan(0);
+  });
+  test("two different adds with different stats do not get identical deltas", () => {
+    const deep = [...lineup(10, {}, "d"), ...lineup(3, { pts: 6, reb: 2 }, "b")];
+    const a = entry("big", { pts: 22, reb: 9, blk: 2 }, 15), b = entry("guard", { pts: 22, reb: 2, ast: 8, stl: 2 }, 15);
+    const r = rankWaiverMoves(deep, [a, b], env);
+    expect(r.moves.length).toBe(2);
+    expect(r.moves[0]!.categoryDelta).not.toEqual(r.moves[1]!.categoryDelta);
+  });
   test("an add who enters the lineup and helps is ranked with a positive add effect", () => {
     const deep = [...lineup(10, {}, "d"), ...lineup(3, { pts: 6, reb: 2 }, "b")];
     const r = rankWaiverMoves(deep, [good], env);
