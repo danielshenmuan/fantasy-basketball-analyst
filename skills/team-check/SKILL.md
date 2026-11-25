@@ -14,9 +14,9 @@ Gives a category-by-category health check of a fantasy basketball roster. A scri
 1. **League settings**: number of teams, **starters** (players who count each week), and active roster spots (starters plus bench, not IL).
 2. **The roster**: every player on the team, marking anyone on IL.
 
-**Look for a league card first.** If the user pasted a "FANTASY LEAGUE CARD", or `~/.fantasy-analyst/league.json` exists, take the settings from it and show them in one line. If there is no card, suggest running the `setup` skill (it saves a card for next time), but do not block on it: ask for the settings directly.
+**Look for a league card first.** If the user pasted a "FANTASY LEAGUE CARD", or `~/.fantasy-analyst/league.json` exists, take the settings from it and show them in one line. If there is no card, suggest running the `setup` skill (it saves a card for next time), but do not block on it: read the settings from the league site, or ask directly. If the user did not name a skill at all, the `analyst` skill is the entry point that routes here.
 
-**Get the roster by the first route that works, in this order**, and say in one line which one you are using:
+**Read the roster without asking the user to paste it.** Follow `../analyst/reading-a-league.md` (per-host recipes for Yahoo and ESPN, and the full fallback ladder). In short, the first route that works, in this order, saying in one line which one you are using:
 1. A connected league tool for that site.
 2. Claude in Chrome, in the user's own signed-in browser (open the roster page in a new tab).
 3. The built-in browser or computer use; if a login is needed, ask the user to sign in themselves.
@@ -26,7 +26,7 @@ Gives a category-by-category health check of a fantasy basketball roster. A scri
 
 Do not stop at the first failure: say why in a few words and try the next route. This skill is read-only. Never ask for a password, never type one, and never send adds, drops or trades.
 
-**Before running anything, show the user the players you read and the league settings, and ask them to confirm.** Misread names are the most likely source of a wrong answer. Also confirm the league is head-to-head and read its category list; points and roto leagues are not supported yet, so say so instead of approximating. If fewer players are active than roster spots, ask whether someone is missing: an empty slot counts as an average player.
+**Before running anything, show the user the players you read and the league settings, and ask them to confirm.** Misread names are the most likely source of a wrong answer. Also confirm the league is head-to-head and read its category list or points scoring; roto is not supported, so say so instead of approximating. If fewer players are active than roster spots, ask whether someone is missing: an empty slot counts as an average player.
 
 ## Run the analysis
 

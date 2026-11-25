@@ -18,7 +18,7 @@ This skill is read-only. Never ask for a password, never propose or accept a tra
 3. **For evaluating a trade**: the players the user would give and get.
 4. **For scoring the other side, or searching offers**: the other team's roster. Without it you can only score the user's side.
 
-Get these by the first route that works, in this order, saying in one line which one you use: a connected league tool; Claude in Chrome in the user's own signed-in browser; the built-in browser or computer use (the user signs in themselves if needed); text the user pastes; screenshots; the user typing names. If a route fails, say why in a few words and try the next.
+Read your roster and the other team's roster in one pass without asking for pasted text: follow `../analyst/reading-a-league.md` (any team's roster page on Yahoo; `view=mRoster` on ESPN). Then, by the first route that works, in this order, saying in one line which one you use: a connected league tool; Claude in Chrome in the user's own signed-in browser; the built-in browser or computer use (the user signs in themselves if needed); text the user pastes; screenshots; the user typing names. If a route fails, say why in a few words and try the next.
 
 **Before running anything, show the roster(s), the players in the trade and the league settings, and ask the user to confirm.**
 

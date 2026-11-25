@@ -17,11 +17,11 @@ If you cannot read files, skip this step and go on.
 
 ## 2. Find out where the league lives
 
-Ask which site hosts it (Yahoo, ESPN, Sleeper, CBS, or other) and ask them to name the league or paste its URL. If they have several, ask which one.
+Ask which site hosts it (Yahoo, ESPN, Sleeper, CBS, or other) and ask them to name the league or paste its URL, in a single question. If they have several, ask which one. If the browser is already on the league page, take the host and id from it instead of asking.
 
 ## 3. Read the league and roster: try every route, in this order
 
-Move to the next route only when the one before is unavailable or fails. Tell the user in one line which route you are using.
+Read everything in one pass without asking the user to paste: follow `../analyst/reading-a-league.md` for the per-host recipes (Yahoo pages, ESPN data endpoints, how ESPN scoring items map to `league.categories` or `league.scoring`). Ask for pasted text only when those fail. In short, move to the next route only when the one before is unavailable or fails. Tell the user in one line which route you are using.
 
 1. **A connected league tool** (an MCP connector or plugin for that site), if one is available in this session.
 2. **Claude in Chrome**, which works in the user's own signed-in browser. If its tools are not loaded, load them first. Open the league in a new tab, and read the settings page and the roster page.

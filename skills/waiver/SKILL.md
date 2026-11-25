@@ -17,7 +17,7 @@ This skill is read-only. Never ask for a password, and never make adds, drops or
 2. **The user's roster**, IL players marked.
 3. **The available players**: the best ones in the league's free-agent list. Send **at most 60**. Take them from the top of the list by percent rostered or recent production, and say which list you used. Mention any player the user is specifically thinking of adding, even if he is not at the top.
 
-Get these by the first route that works, in this order, saying in one line which one you use: a connected league tool; Claude in Chrome in the user's own signed-in browser; the built-in browser or computer use (the user signs in themselves if needed); text the user pastes; screenshots; the user typing names. If a route fails, say why in a few words and try the next.
+Read all three in one pass without asking for pasted text: follow `../analyst/reading-a-league.md` (Yahoo players page filtered to Available; ESPN `view=kona_player_info` with the free-agent filter). Then, by the first route that works, in this order, saying in one line which one you use: a connected league tool; Claude in Chrome in the user's own signed-in browser; the built-in browser or computer use (the user signs in themselves if needed); text the user pastes; screenshots; the user typing names. If a route fails, say why in a few words and try the next.
 
 **Before running anything, show the roster, the league settings and the candidate list, and ask the user to confirm.**
 
