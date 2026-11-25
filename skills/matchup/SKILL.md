@@ -20,7 +20,7 @@ This skill is read-only. Never ask for a password and never send adds, drops, tr
 
 ## Getting the rosters: try every route, in this order
 
-Say in one line which route you use. Move on only when the one before fails, and say why in a few words.
+Read both rosters, the opponent and the live score **in one pass without asking for pasted text**: follow `../analyst/reading-a-league.md` (Yahoo matchup and team pages; ESPN `view=mMatchup` for the opponent and banked stats, and `view=mRoster` for both rosters). Ask the user to paste only when those routes fail. Say in one line which route you use. Move on only when the one before fails, and say why in a few words.
 
 1. A connected league tool for that site.
 2. Claude in Chrome, in the user's own signed-in browser (open the pages in a new tab).
@@ -33,7 +33,7 @@ Say in one line which route you use. Move on only when the one before fails, and
 
 ## A week already under way
 
-Mid-week, read the live score from the matchup page and pass it in, or the result restarts from 0-0 and ignores what is already banked. Also pass each team's games still to play, so every player gets his own team's remaining games (a player whose team plays four more times counts for more than one whose team plays once).
+Mid-week, read the live score from the matchup page (or ESPN's `scoreByStat`, see the reading guide) and pass it in, or the result restarts from 0-0 and ignores what is already banked. Also pass each team's games still to play, so every player gets his own team's remaining games (a player whose team plays four more times counts for more than one whose team plays once).
 
 1. Get games left with the helper, from the first day not yet counted in the banked stats through Sunday (today, if today's games have not started and the page does not show them):
    `node skills/matchup/scripts/games-left.mjs 2026-11-24 2026-11-29`  (prints `{"games":{"ATL":2,...}}`, team codes as in the data file; reads the public NBA scoreboard).
