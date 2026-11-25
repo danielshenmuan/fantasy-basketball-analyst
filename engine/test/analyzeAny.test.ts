@@ -88,3 +88,10 @@ describe("points leagues", () => {
     expect(() => analyzeLeague({ league: { ...league, scoring, categories: ["Points"] }, roster }, snapshot)).toThrow(/not both/);
   });
 });
+
+describe("missed shots in scoring", () => {
+  test("a weight on missed shots is a weight on attempts minus makes", () => {
+    expect(parseWeights({ "Field goals missed": -0.5, "Field goals made": 0.5 })).toEqual({ FGA: -0.5, FGM: 1 });
+    expect(parseWeights({ "3-pointers missed": -1, "3-pointers made": 2 })).toEqual({ "3PA": -1, "3PM": 3 });
+  });
+});

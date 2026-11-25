@@ -313,12 +313,19 @@ export function simulateAny(me: AnyTotals, opponents: AnyTotals[], codes: string
 /** Stat weights by category code. A points league's score is the sum of weight x category total, so only counting categories qualify. */
 export type Weights = Record<string, number>;
 
+/** Missed shots are attempts minus makes, so a weight on one splits into a weight on each. */
+const MISSED: Record<string, { att: string; made: string }> = {};
+for (const [att, made, ...names] of [["FGA", "FGM", "Field goals missed", "Missed field goals", "FG missed", "FGMISS"], ["FTA", "FTM", "Free throws missed", "Missed free throws", "FT missed", "FTMISS"], ["3PA", "3PM", "3-pointers missed", "Missed 3-pointers", "3P missed", "3PMISS"]] as [string, string, ...string[]][])
+  for (const n of names) MISSED[norm(n)] = { att: att!, made: made! };
+
 /** Turn the stat names and weights a host shows into code weights. Throws, naming every stat it does not know or cannot weigh. */
 export function parseWeights(raw: Record<string, number>): Weights {
   const unknown: string[] = [], ratios: string[] = [];
   const out: Weights = {};
   for (const [name, w] of Object.entries(raw)) {
     if (!Number.isFinite(w)) throw new Error(`scoring weight for ${name} must be a number`);
+    const missed = MISSED[norm(name)];
+    if (missed) { out[missed.att] = (out[missed.att] ?? 0) + w; out[missed.made] = (out[missed.made] ?? 0) - w; continue; }
     const code = ALIASES[norm(name)];
     if (!code) { unknown.push(name); continue; }
     if (BY_CODE.get(code)!.den) { ratios.push(name); continue; }

@@ -568,12 +568,22 @@ function simulateAny(me, opponents, codes, opts = {}) {
     distribution: dist.map((x) => x / weeks)
   };
 }
+var MISSED = {};
+for (const [att, made, ...names] of [["FGA", "FGM", "Field goals missed", "Missed field goals", "FG missed", "FGMISS"], ["FTA", "FTM", "Free throws missed", "Missed free throws", "FT missed", "FTMISS"], ["3PA", "3PM", "3-pointers missed", "Missed 3-pointers", "3P missed", "3PMISS"]])
+  for (const n of names)
+    MISSED[norm(n)] = { att, made };
 function parseWeights(raw) {
   const unknown = [], ratios = [];
   const out = {};
   for (const [name, w] of Object.entries(raw)) {
     if (!Number.isFinite(w))
       throw new Error(`scoring weight for ${name} must be a number`);
+    const missed = MISSED[norm(name)];
+    if (missed) {
+      out[missed.att] = (out[missed.att] ?? 0) + w;
+      out[missed.made] = (out[missed.made] ?? 0) - w;
+      continue;
+    }
     const code = ALIASES[norm(name)];
     if (!code) {
       unknown.push(name);
