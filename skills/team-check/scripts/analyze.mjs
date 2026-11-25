@@ -795,19 +795,85 @@ function prefixMatch(q, cand) {
     return true;
   });
 }
+var TEAM_ALIASES = {
+  GS: "GSW",
+  GOS: "GSW",
+  NO: "NOP",
+  NOR: "NOP",
+  NY: "NYK",
+  NYC: "NYK",
+  SA: "SAS",
+  SAN: "SAS",
+  PHO: "PHX",
+  WSH: "WAS",
+  UTAH: "UTA",
+  CHO: "CHA",
+  BRK: "BKN",
+  NJ: "BKN"
+};
+var POSITIONS = new Set(["PG", "SG", "SF", "PF", "C", "G", "F", "GF", "FC", "UTIL", "UT"]);
+var isTeam = (t, teams) => teams.has(TEAM_ALIASES[t] ?? t);
+function splitQuery(query, teams) {
+  let name = query, team;
+  const paren = name.match(/[(\[]([^)\]]*)[)\]]/);
+  if (paren) {
+    for (const t of paren[1].split(/[\s,/|-]+/).map((x) => x.toUpperCase()).filter(Boolean))
+      if (isTeam(t, teams))
+        team = TEAM_ALIASES[t] ?? t;
+    name = name.replace(paren[0], " ");
+  }
+  const words = name.trim().split(/\s+/);
+  while (words.length > 1) {
+    const w = words[words.length - 1];
+    if (!/^[A-Z]{1,4}$/.test(w))
+      break;
+    if (isTeam(w, teams))
+      team ??= TEAM_ALIASES[w] ?? w;
+    else if (!POSITIONS.has(w))
+      break;
+    words.pop();
+  }
+  return { name: words.join(" "), team };
+}
+function initialMatch(q, cand) {
+  return cand.length > 1 && cand[0].startsWith(q[0]) && prefixMatch(q.slice(1), cand.slice(1));
+}
 function resolvePlayer(query, players) {
-  const q = nameTokens(query);
+  const teams = new Set(players.map((p) => p.team).filter((t) => !!t));
+  const { name, team } = splitQuery(query, teams);
+  const q = nameTokens(name);
   if (q.length === 0)
     return { status: "not_found" };
   const key = q.join(" ");
-  const pick = (hits) => hits.length === 1 ? { status: "matched", player: hits[0] } : hits.length > 1 ? { status: "ambiguous", candidates: hits } : { status: "not_found" };
+  const narrow = (hits2) => {
+    if (!team || hits2.length < 2)
+      return hits2;
+    const t = hits2.filter((p) => p.team === team);
+    return t.length ? t : hits2;
+  };
+  const pick = (hits2) => {
+    hits2 = narrow(hits2);
+    return hits2.length === 1 ? { status: "matched", player: hits2[0] } : hits2.length > 1 ? { status: "ambiguous", candidates: hits2 } : { status: "not_found" };
+  };
   const alias2 = players.filter((p) => (p.aliases ?? []).some((a) => nameTokens(a).join(" ") === key));
   if (alias2.length)
     return pick(alias2);
   const exact = players.filter((p) => nameTokens(p.name).join(" ") === key);
   if (exact.length)
     return pick(exact);
-  return pick(players.filter((p) => prefixMatch(q, nameTokens(p.name))));
+  const isInitial = q.length > 1 && q[0].length === 1;
+  const hits = players.filter((p) => isInitial ? initialMatch(q, nameTokens(p.name)) : prefixMatch(q, nameTokens(p.name)));
+  if (hits.length)
+    return pick(hits);
+  if (isInitial) {
+    const sur = q[q.length - 1];
+    const same = players.filter((p) => nameTokens(p.name).slice(1).includes(sur));
+    if (same.length) {
+      const t = team ? same.filter((p) => p.team === team) : [];
+      return { status: "ambiguous", candidates: t.length ? t : same };
+    }
+  }
+  return { status: "not_found" };
 }
 function historyOf(p) {
   return { player_id: p.id, name: p.name, seasons: p.seasons };
@@ -907,7 +973,8 @@ function analyzeAny(input, snapshot, codes, weights) {
     league: input.league,
     names,
     ranking,
-    assumptions
+    assumptions,
+    warnings: []
   };
   if (weights) {
     const mine = pointsOf(weights, mine0.t);
@@ -923,6 +990,7 @@ function analyzeAny(input, snapshot, codes, weights) {
     if (input.trade)
       out.trade = tradeWith(input, snapshot, st);
   }
+  out.warnings = leftOutWarnings([out.names, out.matchup?.names, out.waiver?.names, out.trade?.names]);
   return out;
 }
 function anyMoveSetup(input, snapshot, codes, estimated, pool, engine, seed) {
@@ -1404,10 +1472,21 @@ function analyze(input, snapshot) {
     league: input.league,
     names,
     ranking,
+    warnings: leftOutWarnings([names, matchup?.names, waiver?.names, trade?.names]),
     ...matchup ? { matchup } : {},
     ...waiver ? { waiver } : {},
     ...trade ? { trade } : {}
   };
+}
+function leftOutWarnings(lists) {
+  const seen = new Set, out = [];
+  for (const n of lists.flatMap((l) => l ?? [])) {
+    if (n.status === "matched" || seen.has(n.input))
+      continue;
+    seen.add(n.input);
+    out.push(n.status === "ambiguous" ? `WARNING: "${n.input}" could be ${n.candidates?.map((c) => c.name).join(", ") ?? "more than one player"}; left out of the numbers until you say which.` : `WARNING: "${n.input}" was not found; left out of the numbers.`);
+  }
+  return out;
 }
 function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNames) {
   const m = input.matchup;
@@ -1676,7 +1755,7 @@ function tradeWith(input, snapshot, st) {
     throw new Error("trade needs give and get (or search with other_roster)");
   const give = resolveList(t.give, snapshot, st.estimated, names, " (give)");
   const get = resolveList(t.get, snapshot, st.estimated, names, " (get)");
-  const myIds = new Set(mine.map((p) => p.id));
+  const myIds = new Set(resolveList(input.roster.map((r) => ({ name: r.name })), snapshot, st.estimated, []).map((p) => p.id));
   const notMine = give.filter((p) => !myIds.has(p.id));
   if (notMine.length > 0)
     throw new Error(`you do not have: ${notMine.map((p) => p.name).join(", ")}`);

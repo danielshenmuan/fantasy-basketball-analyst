@@ -35,3 +35,36 @@ describe("name matching", () => {
     expect(name("   ")).toBe("not_found");
   });
 });
+
+describe("host-style abbreviated names (initial + surname + team)", () => {
+  const mk = (id: number, n: string, team: string): SnapshotPlayer => ({ id, name: n, team, seasons: [] });
+  const pool = [
+    mk(1, "Morez Johnson Jr.", "DAL"), mk(2, "Keldon Johnson", "SAS"), mk(3, "Jalen Johnson", "ATL"),
+    mk(4, "Jabari Smith Jr.", "HOU"), mk(5, "Jaylin Smith", "HOU"), mk(6, "Jaylin Smith", "DEN"), mk(7, "Tre Johnson", "WAS"),
+  ];
+  const r = (q: string) => { const m = resolvePlayer(q, pool); return m.status === "matched" ? m.player.name + "@" + m.player.team : m.status === "ambiguous" ? "amb:" + m.candidates.map((c) => c.id).join(",") : m.status; };
+  test("initial + surname + suffix + team and position resolves", () => {
+    expect(r("M. Johnson Jr. (DAL, PF)")).toBe("Morez Johnson Jr.@DAL");
+    expect(r("M. Johnson Jr. DAL PF")).toBe("Morez Johnson Jr.@DAL");
+    expect(r("M. Johnson")).toBe("Morez Johnson Jr.@DAL");
+  });
+  test("ambiguous initials are reported, never guessed", () => {
+    expect(r("J. Johnson")).toBe("Jalen Johnson@ATL");
+    expect(r("T. Johnson")).toBe("Tre Johnson@WAS");
+    expect(r("J. Smith")).toBe("amb:4,5,6");
+  });
+  test("team narrows but never rejects", () => {
+    expect(r("J. Smith (DEN, SF)")).toBe("Jaylin Smith@DEN");
+    expect(r("J. Smith (HOU)")).toBe("amb:4,5");
+    expect(r("J. Smith (LAL)")).toBe("amb:4,5,6");
+    expect(r("M. Johnson (HOU)")).toBe("Morez Johnson Jr.@DAL");
+  });
+  test("host team codes are normalised", () => {
+    expect(r("K. Johnson (SA)")).toBe("Keldon Johnson@SAS");
+  });
+  test("an initial that fits nobody lists the same-surname players", () => {
+    expect(r("Z. Johnson")).toBe("amb:1,2,3,7");
+    expect(r("Z. Johnson (ATL)")).toBe("amb:3");
+    expect(r("Z. Nobodyson")).toBe("not_found");
+  });
+});

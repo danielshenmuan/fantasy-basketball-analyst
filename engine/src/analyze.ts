@@ -185,6 +185,8 @@ export interface AnalyzeOutput extends TeamAssessment {
   baseline: { reference_season: string; current_season: string | null; team_games: number; weight_current: number };
   league: { teams: number; roster_spots: number };
   names: NameResult[];
+  /** Players left out because their name was not found or could be more than one player. Mention these first, ahead of any number. */
+  warnings: string[];
   /** Plain list for the agent to speak from: strongest to weakest by percentile. */
   ranking: { category: Category; band: Band; percentile: number }[];
   matchup?: MatchupOutput;
@@ -283,10 +285,24 @@ export function analyze(input: AnalyzeInput, snapshot: Snapshot): AnalyzeOutput 
     snapshot: { generated_at: snapshot.generated_at, reference_season: snapshot.reference_season },
     baseline: blendInfo,
     league: input.league, names, ranking,
+    warnings: leftOutWarnings([names, matchup?.names, waiver?.names, trade?.names]),
     ...(matchup ? { matchup } : {}),
     ...(waiver ? { waiver } : {}),
     ...(trade ? { trade } : {}),
   };
+}
+
+/** One visible line per player left out of the numbers (not found, or could be several players), across every list of names. */
+export function leftOutWarnings(lists: (NameResult[] | undefined)[]): string[] {
+  const seen = new Set<string>(), out: string[] = [];
+  for (const n of lists.flatMap((l) => l ?? [])) {
+    if (n.status === "matched" || seen.has(n.input)) continue;
+    seen.add(n.input);
+    out.push(n.status === "ambiguous"
+      ? `WARNING: "${n.input}" could be ${n.candidates?.map((c) => c.name).join(", ") ?? "more than one player"}; left out of the numbers until you say which.`
+      : `WARNING: "${n.input}" was not found; left out of the numbers.`);
+  }
+  return out;
 }
 
 /** Weekly head-to-head simulation (D12). Every player is estimated the same way as in the team assessment. */
@@ -574,7 +590,8 @@ export function tradeWith(input: AnalyzeInput, snapshot: Snapshot, st: MoveSetup
   if (!t.give?.length || !t.get?.length) throw new Error("trade needs give and get (or search with other_roster)");
   const give = resolveList(t.give, snapshot, st.estimated, names, " (give)");
   const get = resolveList(t.get, snapshot, st.estimated, names, " (get)");
-  const myIds = new Set(mine.map((p) => p.id));
+  // An IL player is not in `mine` (he counts for nothing), but he can still be given away.
+  const myIds = new Set(resolveList(input.roster.map((r) => ({ name: r.name })), snapshot, st.estimated, []).map((p) => p.id));
   const notMine = give.filter((p) => !myIds.has(p.id));
   if (notMine.length > 0) throw new Error(`you do not have: ${notMine.map((p) => p.name).join(", ")}`);
   const you = evaluateTrade(mine, give, get, st.env);

@@ -74,6 +74,7 @@ Look at the `matchup` object:
 - `schedule_incomplete`: true means the NBA schedule for this week still has games with a team to be announced, so some game counts may be low. Say so before quoting numbers.
 - `rosters.you` and `rosters.opponent`: every matched player with his team's `games` this week, `games_left` (when the week is under way), and `counted` (true if he is in the counted lineup; false for bench and IL). When the user asks who has how many games left, answer from this list.
 - `names` (top level and inside `matchup`): for any `ambiguous` or `not_found` player, ask the user which player they meant. Do not guess. That player is left out of the totals until clarified.
+- `warnings`: players left out of the numbers (name not found or ambiguous). Say these first, before any result, and ask which player was meant. Hosts' short names ("M. Johnson Jr. (DAL, PF)") are accepted as typed; pass the team and position when the host shows them.
 - `matchup.assumptions`: include the important ones.
 
 ## How to talk about it

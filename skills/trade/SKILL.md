@@ -52,6 +52,7 @@ Look at the `trade` object:
 - `games_source`: `schedule` means real game counts; `assumed` means an average week for everyone, so say the numbers are rougher.
 - `schedule_incomplete`: true means a week still has NBA games with a team to be announced, so some game counts may be low. Say so before quoting numbers.
 - `names`: for any `ambiguous` or `not_found` player, ask which player was meant. Do not guess. A trade involving someone the user does not have is rejected.
+- `warnings`: players left out of the numbers (name not found or ambiguous). Say these first, before any result, and ask which player was meant. Hosts' short names ("M. Johnson Jr. (DAL, PF)") are accepted as typed; pass the team and position when the host shows them.
 - `assumptions`: include the important ones.
 
 ## How to talk about it

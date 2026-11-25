@@ -5,6 +5,7 @@ import {
 import {
   resolveList, tradeWith, waiverWith, type AnalyzeInput, type MoveSetup, type NameResult, type PlayerGames,
   type TradeOutput, type WaiverOutput,
+  leftOutWarnings,
 } from "./analyze";
 import { blendWeight } from "./baseline";
 import { estimateAverages, seasonLabel, startYear } from "./history";
@@ -48,6 +49,8 @@ export interface AnyAnalyzeOutput {
   snapshot: { generated_at: string; reference_season: string };
   league: AnalyzeInput["league"];
   names: NameResult[];
+  /** Players left out because their name was not found or could be more than one player. Mention these first, ahead of any number. */
+  warnings: string[];
   /** Strongest to weakest: where your expected week total stands among typical teams (no luck). */
   ranking: { category: string; band: Band; percentile: number }[];
   /** Points leagues: the stat weights, and where your expected week sits among typical teams (no luck). */
@@ -158,7 +161,7 @@ export function analyzeAny(input: AnalyzeInput, snapshot: Snapshot, codes: strin
   const out: AnyAnalyzeOutput = {
     custom_categories: true, categories_used: codes,
     snapshot: { generated_at: snapshot.generated_at, reference_season: snapshot.reference_season },
-    league: input.league, names, ranking, assumptions,
+    league: input.league, names, ranking, assumptions, warnings: [],
   };
 
   if (weights) {
@@ -172,6 +175,7 @@ export function analyzeAny(input: AnalyzeInput, snapshot: Snapshot, codes: strin
     if (input.waiver) out.waiver = waiverWith(input, snapshot, st);
     if (input.trade) out.trade = tradeWith(input, snapshot, st);
   }
+  out.warnings = leftOutWarnings([out.names, out.matchup?.names, out.waiver?.names, out.trade?.names]);
   return out;
 }
 

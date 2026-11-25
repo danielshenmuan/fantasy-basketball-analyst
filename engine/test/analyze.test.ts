@@ -205,6 +205,13 @@ describe("analyze: waiver and trade (D12)", () => {
   test("trade rejects giving a player you do not have", () => {
     expect(() => analyze({ ...req, trade: { ...common, give: [{ name: "Nikola Jokic" }], get: [{ name: "Gui Santos" }] } }, snap)).toThrow("do not have");
   });
+  test("trade can give away an IL player: no lineup loss, the incoming player counts", () => {
+    const il = { ...req, roster: [...req.roster, { name: "Jayson Tatum", status: "IL" as const }] };
+    const o = analyze({ ...il, trade: { ...common, give: [{ name: "Jayson Tatum" }], get: [{ name: "Nikola Jokic" }] } }, snap).trade!;
+    expect(o.mode).toBe("evaluate");
+    expect(o.you!.delta_points).toBeGreaterThanOrEqual(0);
+    expect(() => analyze({ ...il, trade: { ...common, give: [{ name: "Luka Doncic" }], get: [{ name: "Nikola Jokic" }] } }, snap)).toThrow("do not have");
+  });
   test("trade search needs their roster and returns offers", () => {
     expect(() => analyze({ ...req, trade: { ...common, search: true } }, snap)).toThrow("other_roster");
     const o = analyze({ ...req, trade: { ...common, search: true, top: 3, other_roster: [{ name: "Nikola Jokic" }, { name: "Jalen Williams" }, { name: "Gui Santos" }] } }, snap).trade!;
