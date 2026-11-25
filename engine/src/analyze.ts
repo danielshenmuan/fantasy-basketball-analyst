@@ -229,7 +229,8 @@ export function analyze(input: AnalyzeInput, snapshot: Snapshot): AnalyzeOutput 
     const z = categoryZ(p.averages, baseline);
     return { id: p.player_id, z, total: CATEGORIES.reduce((t, c) => t + z[c], 0) };
   });
-  const benchmark = simulateBenchmark(sim, { teams, rosterSpots: roster_spots }, { leagues: input.leagues ?? 500, seed: input.seed ?? 1 });
+  const lineupSlots = input.matchup?.lineup_slots ?? input.waiver?.lineup_slots ?? input.trade?.lineup_slots ?? roster_spots;
+  const benchmark = simulateBenchmark(sim, { teams, rosterSpots: roster_spots }, { leagues: input.leagues ?? 500, seed: input.seed ?? 1, lineupSlots });
 
   const names: NameResult[] = [];
   const roster: RosterPlayer[] = input.roster.map((r) => {

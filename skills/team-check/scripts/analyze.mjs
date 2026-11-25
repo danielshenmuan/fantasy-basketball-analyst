@@ -36,6 +36,7 @@ function simulateBenchmark(players, settings, opts = {}) {
   const leagues = opts.leagues ?? 500;
   const weights = opts.pickWeights ?? DEFAULT_PICK_WEIGHTS;
   const poolSize = teams * rosterSpots;
+  const lineupSlots = Math.max(1, Math.min(rosterSpots, opts.lineupSlots ?? rosterSpots));
   const pool = [...players].sort((a, b) => b.total - a.total).slice(0, poolSize);
   if (pool.length < poolSize)
     throw new Error(`simulateBenchmark: need ${poolSize} players, got ${pool.length}`);
@@ -43,23 +44,24 @@ function simulateBenchmark(players, settings, opts = {}) {
   const sums = Object.fromEntries(CATEGORIES.map((c) => [c, []]));
   for (let l = 0;l < leagues; l++) {
     const remaining = pool.slice();
-    const team = Array.from({ length: teams }, () => Object.fromEntries(CATEGORIES.map((c) => [c, 0])));
+    const team = Array.from({ length: teams }, () => []);
     for (let round = 0;round < rosterSpots; round++) {
       for (let k = 0;k < teams; k++) {
         const t = round % 2 === 0 ? k : teams - 1 - k;
         const [p] = remaining.splice(pickIndex(remaining.length, weights, rand), 1);
-        for (const c of CATEGORIES)
-          team[t][c] += p.z[c];
+        team[t].push(p);
       }
     }
-    for (const t of team)
+    for (const t of team) {
+      const lineup = t.sort((a, b) => b.total - a.total).slice(0, lineupSlots);
       for (const c of CATEGORIES)
-        sums[c].push(t[c]);
+        sums[c].push(lineup.reduce((s, p) => s + p.z[c], 0));
+    }
   }
   for (const c of CATEGORIES)
     sums[c].sort((a, b) => a - b);
   const poolMean = Object.fromEntries(CATEGORIES.map((c) => [c, pool.reduce((t, p) => t + p.z[c], 0) / pool.length]));
-  return { settings, leagues, pickWeights: weights, teamSums: sums, poolMean };
+  return { settings, leagues, pickWeights: weights, lineupSlots, teamSums: sums, poolMean };
 }
 
 // src/matchup.ts
@@ -1132,7 +1134,7 @@ function percentileOf(sortedAsc, x) {
 var at = (xs, p) => xs[Math.min(xs.length - 1, Math.floor(p / 100 * xs.length))];
 function assessTeam(roster, baseline, benchmark, opts) {
   const cut = opts.cutoffs ?? DEFAULT_CUTOFFS;
-  const spots = benchmark.settings.rosterSpots;
+  const spots = benchmark.lineupSlots;
   const zero = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
   const rows = roster.map((r) => {
     const est = estimateAverages(r.history, opts.reference, { current: opts.current });
@@ -1149,7 +1151,7 @@ function assessTeam(roster, baseline, benchmark, opts) {
     if (x.status === "IL")
       note = "On IL: not counted.";
     else if (!counted.has(x))
-      note = "More players than roster spots: not counted.";
+      note = "Bench: not counted (only your best lineup players count, as in the weekly matchup).";
     else if (x.est.confidence === "none")
       note = "No NBA data (rookie or no recent games): counted as an average rostered player.";
     else if (x.est.currentSeasonOnly)
@@ -1178,14 +1180,14 @@ function assessTeam(roster, baseline, benchmark, opts) {
     for (const c of CATEGORIES)
       sums[c] += benchmark.poolMean[c];
   if (empty > 0)
-    assumptions.push(`${empty} empty roster slot(s) counted as an average rostered player.`);
+    assumptions.push(`${empty} empty lineup slot(s) counted as an average rostered player.`);
   const currentOnly = players.filter((p) => p.counted && rows.find((x) => x.r.name === p.name)?.est.currentSeasonOnly).length;
   if (currentOnly > 0)
     assumptions.push(`${currentOnly} player(s) with no completed NBA seasons are judged on this season only; small samples can swing.`);
   const noData = players.filter((p) => p.counted && p.confidence === "none").length;
   if (noData > 0)
     assumptions.push(`${noData} player(s) with no NBA data counted as an average rostered player.`);
-  assumptions.push(`Players are estimated from their last three seasons, weighted by recency (${RECENCY_WEIGHTS.join(" / ")}) and games played (capped at ${GAMES_CAP} per season). Aging and role changes are not modelled.`, `Benchmark: ${benchmark.settings.teams} teams x ${spots} roster spots, ${benchmark.leagues} simulated snake drafts, each pick one of the best ${benchmark.pickWeights.length} remaining. Positions are ignored.`, "Every counted player's production is summed; daily lineup limits are not modelled.", `Bands by percentile among simulated teams: elite >= ${cut.elite}, strong >= ${cut.strong}, neutral >= ${cut.neutral}, otherwise weak.`);
+  assumptions.push(`Players are estimated from their last three seasons, weighted by recency (${RECENCY_WEIGHTS.join(" / ")}) and games played (capped at ${GAMES_CAP} per season). Aging and role changes are not modelled.`, `Benchmark: ${benchmark.settings.teams} teams x ${benchmark.settings.rosterSpots} roster spots, ${benchmark.leagues} simulated snake drafts, each pick one of the best ${benchmark.pickWeights.length} remaining. Positions are ignored.`, `Season-long strength, not this week: only each team's best ${spots} players (by total score) are summed, the same lineup size the weekly matchup uses. No schedule, game counts or luck are included, so a category's band can differ from this week's matchup win chance, most when a heavy or light week of games or luck is involved.`, "Daily lineup limits are not modelled.", `Bands by percentile among simulated teams: elite >= ${cut.elite}, strong >= ${cut.strong}, neutral >= ${cut.neutral}, otherwise weak.`);
   const categories = {};
   for (const c of CATEGORIES) {
     const b = benchmark.teamSums[c];
@@ -1362,7 +1364,8 @@ function analyze(input, snapshot) {
     const z = categoryZ(p.averages, baseline);
     return { id: p.player_id, z, total: CATEGORIES.reduce((t, c) => t + z[c], 0) };
   });
-  const benchmark = simulateBenchmark(sim, { teams, rosterSpots: roster_spots }, { leagues: input.leagues ?? 500, seed: input.seed ?? 1 });
+  const lineupSlots = input.matchup?.lineup_slots ?? input.waiver?.lineup_slots ?? input.trade?.lineup_slots ?? roster_spots;
+  const benchmark = simulateBenchmark(sim, { teams, rosterSpots: roster_spots }, { leagues: input.leagues ?? 500, seed: input.seed ?? 1, lineupSlots });
   const names = [];
   const roster = input.roster.map((r) => {
     const m = resolvePlayer(r.name, snapshot.players);

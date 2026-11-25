@@ -30,7 +30,7 @@ Do not stop at the first failure: say why in a few words and try the next route.
 
 ## Run the analysis
 
-Write the request as JSON (`matchup.lineup_slots` is the number of starters; leave `matchup` out if it is unknown) and run the script with Node 18 or newer. Use the live data file first; it is refreshed every night.
+Write the request as JSON (`matchup.lineup_slots` is the number of starters and also sets how many players the bands count; leave it out and every roster spot counts) and run the script with Node 18 or newer. Use the live data file first; it is refreshed every night.
 
 ```bash
 echo '{"league":{"teams":12,"roster_spots":13},"matchup":{"lineup_slots":10},"roster":[{"name":"Nikola Jokic"},{"name":"Max Strus","status":"IL"}]}' \
@@ -44,7 +44,7 @@ If the script cannot run at all (no Node, no file access), tell the user the ana
 ## Read the result
 
 - `ranking`: the league's categories from strongest to weakest, each with a band and a rounded percentile. Quote these, not the unrounded numbers elsewhere in the output.
-- Bands compare the team with simulated leagues of the same size: **elite** (top 15%), **strong**, **neutral**, **weak** (bottom 40%).
+- Bands answer "how strong is this roster for the season?": your best `lineup_slots` players (the rest are bench) against simulated leagues of the same size, with no schedule, no game counts and no luck. They are not this week's win chance: **elite** (top 15%), **strong**, **neutral**, **weak** (bottom 40%). The `matchup` percents answer "how likely am I to win this week?" (real game counts, luck, your starters), so a band and a win chance can differ: a weak category can still be favoured in a week your players have many games, and a strong one can lose a light week. Say which question each number answers, and when they differ, name the reason (games this week, or luck).
 - `names`: how each typed name was read. For any `ambiguous` or `not_found` entry, **ask the user** which player they meant. Do not guess. Until clarified, that player counts as an average player.
 - `players`: each player's confidence. `none` means no usable NBA data, `low` means a small sample, and a player who missed last season is estimated from earlier seasons. A rookie, or anyone with no completed NBA season, is judged on this season's games alone (see the note on that player) and is always `low` until about 50 games. Mention these when they affect the answer.
 - `baseline`: what the "average rostered player" yardstick is built from. Early in a season it blends last season with this one (`weight_current` is this season's share, which grows with games played). Mention it only if the user asks why numbers moved.

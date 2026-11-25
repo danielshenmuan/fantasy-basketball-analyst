@@ -12,6 +12,8 @@ export interface SimOptions {
   seed?: number;
   /** Chance of taking the 1st, 2nd, ... best remaining player at each pick. */
   pickWeights?: number[];
+  /** Players who count per team: each simulated team's best `lineupSlots` by total score. Default: all roster spots. */
+  lineupSlots?: number;
 }
 /** Take the best remaining player 45% of the time, the 2nd 25%, 3rd 15%, 4th 10%, 5th 5%. */
 export const DEFAULT_PICK_WEIGHTS = [0.45, 0.25, 0.15, 0.1, 0.05];
@@ -20,6 +22,8 @@ export interface Benchmark {
   settings: LeagueSettings;
   leagues: number;
   pickWeights: number[];
+  /** Players counted per team (the best by total score); the rest are bench. */
+  lineupSlots: number;
   /** Every simulated team's total in each category, sorted ascending. */
   teamSums: Record<Category, number[]>;
   /** The average drafted player's score in each category: what an unknown or missing player is assumed to be. */
@@ -60,23 +64,28 @@ export function simulateBenchmark(players: SimPlayer[], settings: LeagueSettings
   const leagues = opts.leagues ?? 500;
   const weights = opts.pickWeights ?? DEFAULT_PICK_WEIGHTS;
   const poolSize = teams * rosterSpots;
+  const lineupSlots = Math.max(1, Math.min(rosterSpots, opts.lineupSlots ?? rosterSpots));
   const pool = [...players].sort((a, b) => b.total - a.total).slice(0, poolSize);
   if (pool.length < poolSize) throw new Error(`simulateBenchmark: need ${poolSize} players, got ${pool.length}`);
   const rand = mulberry32(opts.seed ?? 1);
   const sums = Object.fromEntries(CATEGORIES.map((c) => [c, [] as number[]])) as Record<Category, number[]>;
   for (let l = 0; l < leagues; l++) {
     const remaining = pool.slice();
-    const team = Array.from({ length: teams }, () => Object.fromEntries(CATEGORIES.map((c) => [c, 0])) as Record<Category, number>);
+    const team: SimPlayer[][] = Array.from({ length: teams }, () => []);
     for (let round = 0; round < rosterSpots; round++) {
       for (let k = 0; k < teams; k++) {
         const t = round % 2 === 0 ? k : teams - 1 - k; // snake order
         const [p] = remaining.splice(pickIndex(remaining.length, weights, rand), 1);
-        for (const c of CATEGORIES) team[t]![c] += p!.z[c];
+        team[t]!.push(p!);
       }
     }
-    for (const t of team) for (const c of CATEGORIES) sums[c].push(t[c]);
+    // Only the best `lineupSlots` by total score count, as in the weekly matchup.
+    for (const t of team) {
+      const lineup = t.sort((a, b) => b.total - a.total).slice(0, lineupSlots);
+      for (const c of CATEGORIES) sums[c].push(lineup.reduce((s, p) => s + p.z[c], 0));
+    }
   }
   for (const c of CATEGORIES) sums[c].sort((a, b) => a - b);
   const poolMean = Object.fromEntries(CATEGORIES.map((c) => [c, pool.reduce((t, p) => t + p.z[c], 0) / pool.length])) as Record<Category, number>;
-  return { settings, leagues, pickWeights: weights, teamSums: sums, poolMean };
+  return { settings, leagues, pickWeights: weights, lineupSlots, teamSums: sums, poolMean };
 }

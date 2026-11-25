@@ -212,3 +212,39 @@ describe("analyze: waiver and trade (D12)", () => {
     expect(Array.isArray(o.offers)).toBe(true);
   });
 });
+
+describe("analyze: team-check bands count only the lineup, so they agree with the matchup (issue #15)", () => {
+  const rated = fixture.filter((p) => p.gp >= 40 && p.mpg >= 20);
+  const byPts = [...rated].sort((a, b) => b.averages.pts - a.averages.pts);
+  const names = (ps: PlayerSeason[]) => ps.map((p) => ({ name: p.name }));
+  const lg = { teams: 10, roster_spots: 13 };
+  // Ten starters plus three bench players, so the lineup is smaller than the roster.
+  const strong = [...byPts.slice(0, 10), ...byPts.slice(-3)];
+  const weak = [...byPts.slice(-10), ...byPts.slice(0, 3)];
+  const run = (ps: PlayerSeason[], slots: number) => analyze({ league: lg, roster: names(ps), matchup: { lineup_slots: slots, weeks: 3000 } }, snapshot);
+
+  test("bench players are not counted, and are labelled as bench", () => {
+    const o = run(strong, 10);
+    expect(o.players.filter((p) => p.counted).length).toBe(10);
+    expect(o.players.filter((p) => !p.counted).every((p) => p.note.includes("Bench"))).toBe(true);
+    expect(o.assumptions.some((a) => a.includes("not this week"))).toBe(true);
+  });
+  test("a bench full of poor scorers does not drag a scoring lineup down", () => {
+    const withBench = run(strong, 10), lineupOnly = analyze({ league: lg, roster: names(strong.slice(0, 10)), matchup: { lineup_slots: 10 } }, snapshot);
+    expect(withBench.categories.PTS.total).toBeCloseTo(lineupOnly.categories.PTS.total, 10);
+  });
+  test("a roster built to be strong in points is strong in both team-check and the matchup", () => {
+    const o = run(strong, 10);
+    expect(["strong", "elite"]).toContain(o.categories.PTS.band);
+    expect(o.matchup!.categories.PTS).toBeGreaterThan(55);
+  });
+  test("a roster built to be weak in points is weak in both team-check and the matchup", () => {
+    const o = run(weak, 10);
+    expect(o.categories.PTS.band).toBe("weak");
+    expect(o.matchup!.categories.PTS).toBeLessThan(45);
+  });
+  test("the lineup size changes the benchmark (the simulated teams are also their best starters only)", () => {
+    const all = analyze({ league: lg, roster: names(strong) }, snapshot), ten = run(strong, 10);
+    expect(ten.categories.PTS.benchmark.median).not.toBe(all.categories.PTS.benchmark.median);
+  });
+});
