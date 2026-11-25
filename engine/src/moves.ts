@@ -82,7 +82,7 @@ export interface Move {
   categoryDelta: Record<string, number>;
 }
 /** bench-only: would not enter the lineup. no-gain-from-add: enters, but adds nothing beyond the drop. below-top: ranked worse than the moves shown. */
-export interface Unranked { add: Entry; reason: "bench-only" | "no-gain-from-add" | "below-top" }
+export interface Unranked { add: Entry; reason: "bench-only" | "no-gain-from-add" | "below-top"; /** For no-gain-from-add: the drop that served this add best (explanation only; ranking is unchanged). */ drop?: Entry }
 
 /** Does `entry` count in the lineup of `roster` (padded with the replacement player like scoreRoster)? Same pick as weeklyTotals. */
 export function entersLineup(roster: Entry[], entry: Entry, env: MoveEnv): boolean {
@@ -124,7 +124,7 @@ export function rankWaiverMoves(
     }
     if (!pick) { unranked.push({ add, reason: "bench-only" }); continue; }
     const addGain = pick.win - dropOnlyAt(pick.drop, quick, dropOnlyQuick);
-    if (addGain <= 0) { unranked.push({ add, reason: "no-gain-from-add" }); continue; }
+    if (addGain <= 0) { unranked.push({ add, reason: "no-gain-from-add", drop: pick.drop }); continue; }
     picks.push({ ...pick, addGain });
   }
   // Rank by what the add contributes, then re-score the best few at full length so the reported numbers are steady.
@@ -137,7 +137,7 @@ export function rankWaiverMoves(
     const after = scoreRoster(without(drop).concat(add), env);
     const only = dropOnlyAt(drop, env.simWeeks, dropOnlyFull);
     const addDelta = after.weekWin - only;
-    if (addDelta <= 0) { unranked.push({ add, reason: "no-gain-from-add" }); continue; }
+    if (addDelta <= 0) { unranked.push({ add, reason: "no-gain-from-add", drop }); continue; }
     moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: only - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline) });
   }
   moves.sort((a, b) => b.addDelta - a.addDelta);

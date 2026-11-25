@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { weeklyTotals } from "../src/matchup";
 import { evaluateTrade, rankWaiverMoves, scoreRoster, searchTrades, type Entry, type MoveEnv } from "../src/moves";
 import type { SeasonAverages } from "../src/types";
+import { explainUnranked } from "../src/analyze";
 
 const avg = (o: Partial<SeasonAverages> = {}): SeasonAverages => ({
   pts: 15, reb: 5, ast: 3, stl: 1, blk: 0.5, fg3m: 1.5, fg_pct: 0.46, ft_pct: 0.8, turnovers: 2, fga: 11, fta: 3, fgm: 5.06, ftm: 2.4, ...o,
@@ -124,5 +125,36 @@ describe("trades", () => {
   test("searchTrades is reproducible", () => {
     const a = searchTrades(mine, theirs, env).map((o) => `${o.give.name}>${o.get.name}`);
     expect(searchTrades(mine, theirs, env).map((o) => `${o.give.name}>${o.get.name}`)).toEqual(a);
+  });
+});
+
+describe("explainUnranked (issue #21): a model limit, not a verdict on the player", () => {
+  const deep = [...lineup(10, {}, "d"), ...lineup(3, { pts: 6, reb: 2 }, "b")];
+  test("bench-only says where he would rank and states the model limit", () => {
+    const x = explainUnranked({ add: entry("benchX", {}, -6), reason: "bench-only" }, deep, 10);
+    expect(x.label).toBe("not counted by this model");
+    expect(x.rank_if_added).toBe(14);
+    expect(x.roster_size_with_add).toBe(14);
+    expect(x.explanation).toContain("14th of 14");
+    expect(x.explanation).toContain("does not model days when starters are off");
+    expect(x.explanation.toLowerCase()).not.toContain("no lineup effect");
+  });
+  test("no-gain-from-add names who he would replace and where that player ranks", () => {
+    const drop = deep[9]!;
+    const x = explainUnranked({ add: entry("meh", {}, 1.5), reason: "no-gain-from-add", drop }, deep, 10);
+    expect(x.would_replace).toBe(drop.name);
+    expect(x.would_replace_rank).toBe(11);
+    expect(x.rank_if_added).toBe(10);
+    expect(x.explanation).toContain(drop.name);
+    expect(x.explanation).toContain("does not model days when starters are off");
+  });
+  test("rankWaiverMoves hands the drop to no-gain-from-add entries without changing the ranking", () => {
+    const r = rankWaiverMoves(deep, [entry("meh", { pts: 9 }, 1.5), entry("good", { pts: 24, reb: 9 }, 20)], env);
+    for (const u of r.unranked) if (u.reason === "no-gain-from-add") expect(u.drop).toBeDefined();
+  });
+  test("below-top is not described as a bench player", () => {
+    const x = explainUnranked({ add: entry("z", {}, 5), reason: "below-top" }, deep, 10);
+    expect(x.rank_if_added).toBeUndefined();
+    expect(x.explanation).toContain("longer list");
   });
 });

@@ -76,12 +76,30 @@ export interface WaiverOutput {
     add_games_basis: number;
     categories_delta_points: MoveCategoryDelta;
   }[];
-  /** Candidates not ranked: they would sit on the bench (no lineup effect), or add nothing beyond the drop. */
-  not_ranked: { add: string; reason: "bench-only" | "no-gain-from-add" | "below-top" }[];
+  /**
+   * Candidates not ranked. This is a limit of the model, not a verdict on the player: it counts only the best
+   * `lineup_slots` players each week and treats everyone else as sitting all week; it does not model days when starters are off.
+   */
+  not_ranked: NotRanked[];
   /** True when a week in `weeks_used` still has schedule games with a team to be announced. */
   schedule_incomplete: boolean;
   names: NameResult[];
   assumptions: string[];
+}
+export interface NotRanked {
+  add: string;
+  reason: "bench-only" | "no-gain-from-add" | "below-top";
+  /** Always "not counted by this model": never "no lineup effect" or "worth nothing". */
+  label: "not counted by this model";
+  /** Where he would rank by weekly production among your roster with him added (1 = best). Absent for below-top. */
+  rank_if_added?: number;
+  roster_size_with_add?: number;
+  lineup_slots: number;
+  /** no-gain-from-add: the player he would replace and that player's rank among your roster (by the same production measure). */
+  would_replace?: string;
+  would_replace_rank?: number;
+  /** Plain-words sentence to relay, including the model limit. */
+  explanation: string;
 }
 export interface TradeSide { before_week_win_pct: number; after_week_win_pct: number; delta_points: number; categories_delta_points: MoveCategoryDelta }
 export interface TradeOutput {
@@ -486,6 +504,26 @@ function runWaiver(input: AnalyzeInput, snapshot: Snapshot, reference: string, c
   return waiverWith(input, snapshot, moveSetup(input, w, snapshot, reference, currentSeason, baseline));
 }
 
+const ord = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10 > 3 ? 0 : n % 10]}`;
+const MODEL_LIMIT = "This model counts a bench player as sitting all week; it does not model days when starters are off, so any value he would give on those days is not counted.";
+
+/** Plain-words description of a candidate the ranking did not score. Wording and output fields only: the ranking is unchanged. */
+function explainUnranked(u: { add: { name: string; value: number }; reason: NotRanked["reason"]; drop?: { name: string; value: number } }, roster: { id?: number; name: string; value: number }[], slots: number): NotRanked {
+  const base = { add: u.add.name, reason: u.reason, label: "not counted by this model" as const, lineup_slots: slots };
+  if (u.reason === "below-top") {
+    return { ...base, explanation: `${u.add.name} would help, but less than the moves listed; ask for a longer list to see him.` };
+  }
+  const size = roster.length + 1;
+  const rank = 1 + roster.filter((p) => p.value > u.add.value).length;
+  const r = { ...base, rank_if_added: rank, roster_size_with_add: size };
+  if (u.reason === "bench-only") {
+    return { ...r, explanation: `He would rank ${ord(rank)} of ${size} on your roster by weekly production, outside your ${slots} counted lineup spots, so this model counts him as a bench player. ${MODEL_LIMIT}` };
+  }
+  const drop = u.drop!;
+  const dropRank = 1 + roster.filter((p) => p.value > drop.value).length + (u.add.value > drop.value ? 1 : 0);
+  return { ...r, would_replace: drop.name, would_replace_rank: dropRank, explanation: `He would rank ${ord(rank)} of ${size} by weekly production. The player he would most plausibly replace, ${drop.name}, ranks ${ord(dropRank)}; in this model the swap does not improve your weekly win chance (his counted production is not above what you give up). ${MODEL_LIMIT}` };
+}
+
 /** The waiver ranking for a prepared environment (shared by the nine-category and any-category paths). */
 export function waiverWith(input: AnalyzeInput, snapshot: Snapshot, st: MoveSetup): WaiverOutput {
   const w = input.waiver!;
@@ -503,7 +541,7 @@ export function waiverWith(input: AnalyzeInput, snapshot: Snapshot, st: MoveSetu
       delta_points: pct1(m.delta), drop_only_points: pct1(m.dropOnlyDelta), add_effect_points: pct1(m.addDelta),
       add_confidence: m.add.confidence ?? "none", add_games_basis: Math.round(m.add.effectiveGames ?? 0), categories_delta_points: catDelta(m.categoryDelta),
     })),
-    not_ranked: unranked.map((u) => ({ add: u.add.name, reason: u.reason })),
+    not_ranked: unranked.map((u) => explainUnranked(u, roster, st.env.slots)),
     names, assumptions: [...st.assumptions, "Moves are ranked by what the added player contributes beyond the drop. A player who would not enter your lineup, or who adds nothing beyond removing the drop, is listed as not ranked."],
   };
 }

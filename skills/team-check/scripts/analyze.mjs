@@ -1250,7 +1250,7 @@ function rankWaiverMoves(roster, candidates, env, opts = {}) {
     }
     const addGain = pick.win - dropOnlyAt(pick.drop, quick, dropOnlyQuick);
     if (addGain <= 0) {
-      unranked.push({ add, reason: "no-gain-from-add" });
+      unranked.push({ add, reason: "no-gain-from-add", drop: pick.drop });
       continue;
     }
     picks.push({ ...pick, addGain });
@@ -1268,7 +1268,7 @@ function rankWaiverMoves(roster, candidates, env, opts = {}) {
     const only = dropOnlyAt(drop, env.simWeeks, dropOnlyFull);
     const addDelta = after.weekWin - only;
     if (addDelta <= 0) {
-      unranked.push({ add, reason: "no-gain-from-add" });
+      unranked.push({ add, reason: "no-gain-from-add", drop });
       continue;
     }
     moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: only - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline) });
@@ -1598,6 +1598,23 @@ function runWaiver(input, snapshot, reference, currentSeason, baseline) {
     throw new Error("waiver.candidates has more than 60 players; send the best available");
   return waiverWith(input, snapshot, moveSetup(input, w, snapshot, reference, currentSeason, baseline));
 }
+var ord = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10 > 3 ? 0 : n % 10]}`;
+var MODEL_LIMIT = "This model counts a bench player as sitting all week; it does not model days when starters are off, so any value he would give on those days is not counted.";
+function explainUnranked(u, roster, slots) {
+  const base = { add: u.add.name, reason: u.reason, label: "not counted by this model", lineup_slots: slots };
+  if (u.reason === "below-top") {
+    return { ...base, explanation: `${u.add.name} would help, but less than the moves listed; ask for a longer list to see him.` };
+  }
+  const size = roster.length + 1;
+  const rank = 1 + roster.filter((p) => p.value > u.add.value).length;
+  const r = { ...base, rank_if_added: rank, roster_size_with_add: size };
+  if (u.reason === "bench-only") {
+    return { ...r, explanation: `He would rank ${ord(rank)} of ${size} on your roster by weekly production, outside your ${slots} counted lineup spots, so this model counts him as a bench player. ${MODEL_LIMIT}` };
+  }
+  const drop = u.drop;
+  const dropRank = 1 + roster.filter((p) => p.value > drop.value).length + (u.add.value > drop.value ? 1 : 0);
+  return { ...r, would_replace: drop.name, would_replace_rank: dropRank, explanation: `He would rank ${ord(rank)} of ${size} by weekly production. The player he would most plausibly replace, ${drop.name}, ranks ${ord(dropRank)}; in this model the swap does not improve your weekly win chance (his counted production is not above what you give up). ${MODEL_LIMIT}` };
+}
 function waiverWith(input, snapshot, st) {
   const w = input.waiver;
   const names = [];
@@ -1623,7 +1640,7 @@ function waiverWith(input, snapshot, st) {
       add_games_basis: Math.round(m.add.effectiveGames ?? 0),
       categories_delta_points: catDelta(m.categoryDelta)
     })),
-    not_ranked: unranked.map((u) => ({ add: u.add.name, reason: u.reason })),
+    not_ranked: unranked.map((u) => explainUnranked(u, roster, st.env.slots)),
     names,
     assumptions: [...st.assumptions, "Moves are ranked by what the added player contributes beyond the drop. A player who would not enter your lineup, or who adds nothing beyond removing the drop, is listed as not ranked."]
   };
