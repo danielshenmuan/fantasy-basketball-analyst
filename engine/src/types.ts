@@ -24,6 +24,18 @@ export interface SeasonAverages {
    */
   fgm?: number;
   ftm?: number;
+  /**
+   * More snapshot additions (per game; `dd_rate` / `td_rate` are the share of games), optional so older files still load.
+   * Needed by leagues that score categories beyond the standard nine. `min` is minutes per game, filled in from the
+   * season line when estimates are blended.
+   */
+  oreb?: number;
+  dreb?: number;
+  pf?: number;
+  fg3a?: number;
+  dd_rate?: number;
+  td_rate?: number;
+  min?: number;
 }
 
 /** League means and standard deviations for one season (a row of nba_data.league_pg_stats_by_season). */

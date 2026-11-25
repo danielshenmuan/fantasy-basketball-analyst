@@ -1,3 +1,5 @@
+import { analyzeAny, type AnyAnalyzeOutput } from "./analyzeAny";
+import { isStandardNine, parseCategories } from "./anycat";
 import { assessTeam, type RosterPlayer, type TeamAssessment } from "./assess";
 import { blendBaselines, blendWeight, buildBaseline } from "./baseline";
 import { categoryZ } from "./fantasyValue";
@@ -12,7 +14,8 @@ import {
 import { CATEGORIES, type Band, type Category, type PlayerSeason } from "./types";
 
 export interface AnalyzeInput {
-  league: { teams: number; roster_spots: number };
+  /** `categories`: the league's scoring categories as the host names them ("Points", "3-pointers made", "Double-doubles"). Omit for the standard nine. */
+  league: { teams: number; roster_spots: number; categories?: string[] };
   roster: { name: string; status?: "IL" | "active" }[];
   /** Season for the league baseline; defaults to the snapshot's. */
   reference?: string;
@@ -177,6 +180,16 @@ function check(input: AnalyzeInput): void {
   if (!Number.isInteger(roster_spots) || roster_spots < 5 || roster_spots > 20) throw new Error("league.roster_spots must be a whole number from 5 to 20 (active slots, not IL)");
   if (!Array.isArray(input.roster) || input.roster.length === 0) throw new Error("roster must list at least one player");
   if (input.roster.length > 40) throw new Error("roster has more than 40 players");
+}
+
+/** The entry point: the standard nine take the original path, any other category list goes to the any-category engine. */
+export function analyzeLeague(input: AnalyzeInput, snapshot: Snapshot): AnalyzeOutput | AnyAnalyzeOutput {
+  check(input);
+  if (input.league.categories) {
+    const codes = parseCategories(input.league.categories);
+    if (!isStandardNine(codes)) return analyzeAny(input, snapshot, codes);
+  }
+  return analyze(input, snapshot);
 }
 
 export function analyze(input: AnalyzeInput, snapshot: Snapshot): AnalyzeOutput {
@@ -389,7 +402,7 @@ function estimatePlayers(snapshot: Snapshot, reference: string, currentSeason: s
   return out;
 }
 
-interface MoveSetup {
+export interface MoveSetup {
   env: MoveEnv;
   estimated: Map<number, Entry>;
   weeksUsed: string[];
@@ -434,7 +447,7 @@ function moveSetup(
   return { env: { slots, weeks, simWeeks, seed, replacement }, estimated, weeksUsed: weeks.map((w) => w.start ?? "assumed"), gamesSource, scheduleIncomplete: scheduled.some((w) => (w.tbd_slots ?? 0) > 0), assumptions };
 }
 
-function resolveList(
+export function resolveList(
   list: { name: string; status?: "IL" | "active" }[], snapshot: Snapshot, estimated: Map<number, Entry>, names: NameResult[], suffix = "",
 ): Entry[] {
   const out: Entry[] = [];
@@ -451,7 +464,7 @@ function resolveList(
   return out;
 }
 
-const pct1 = (x: number) => Math.round(x * 1000) / 10;
+export const pct1 = (x: number) => Math.round(x * 1000) / 10;
 const catDelta = (d: Record<Category, number>): MoveCategoryDelta => Object.fromEntries(CATEGORIES.map((c) => [c, pct1(d[c])]));
 const side = (b: Score, a: Score, delta: number, cd: Record<Category, number>): TradeSide => ({
   before_week_win_pct: Math.round(b.weekWin * 100), after_week_win_pct: Math.round(a.weekWin * 100), delta_points: pct1(delta), categories_delta_points: catDelta(cd),
@@ -461,7 +474,12 @@ function runWaiver(input: AnalyzeInput, snapshot: Snapshot, reference: string, c
   const w = input.waiver!;
   if (!Array.isArray(w.candidates) || w.candidates.length === 0) throw new Error("waiver.candidates must list at least one available player");
   if (w.candidates.length > 60) throw new Error("waiver.candidates has more than 60 players; send the best available");
-  const st = moveSetup(input, w, snapshot, reference, currentSeason, baseline);
+  return waiverWith(input, snapshot, moveSetup(input, w, snapshot, reference, currentSeason, baseline));
+}
+
+/** The waiver ranking for a prepared environment (shared by the nine-category and any-category paths). */
+export function waiverWith(input: AnalyzeInput, snapshot: Snapshot, st: MoveSetup): WaiverOutput {
+  const w = input.waiver!;
   const names: NameResult[] = [];
   const roster = resolveList(input.roster, snapshot, st.estimated, names);
   const mine = new Set(roster.map((p) => p.id));
@@ -482,8 +500,12 @@ function runWaiver(input: AnalyzeInput, snapshot: Snapshot, reference: string, c
 }
 
 function runTrade(input: AnalyzeInput, snapshot: Snapshot, reference: string, currentSeason: string, baseline: ReturnType<typeof buildBaseline>): TradeOutput {
+  return tradeWith(input, snapshot, moveSetup(input, input.trade!, snapshot, reference, currentSeason, baseline));
+}
+
+/** The trade evaluation or search for a prepared environment. */
+export function tradeWith(input: AnalyzeInput, snapshot: Snapshot, st: MoveSetup): TradeOutput {
   const t = input.trade!;
-  const st = moveSetup(input, t, snapshot, reference, currentSeason, baseline);
   const names: NameResult[] = [];
   const mine = resolveList(input.roster, snapshot, st.estimated, names);
   const theirs = t.other_roster ? resolveList(t.other_roster, snapshot, st.estimated, names, " (other team)") : [];

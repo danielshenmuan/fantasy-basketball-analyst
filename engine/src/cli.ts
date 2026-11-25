@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { analyze, type AnalyzeInput } from "./analyze";
+import { analyzeLeague, type AnalyzeInput } from "./analyze";
 import type { Snapshot } from "./snapshot";
 
 const USAGE = `Usage: analyze.mjs --snapshot <snapshot.json | https://url> [--input <request.json>]
@@ -29,7 +29,7 @@ try {
     const snapshot = await loadSnapshot(snapPath);
     const inputPath = arg("--input");
     const input = JSON.parse(readFileSync(inputPath ?? 0, "utf8")) as AnalyzeInput;
-    console.log(JSON.stringify(analyze(input, snapshot), null, 2));
+    console.log(JSON.stringify(analyzeLeague(input, snapshot), null, 2));
   }
 } catch (e) {
   console.error(JSON.stringify({ error: e instanceof Error ? e.message : String(e), usage: USAGE }));

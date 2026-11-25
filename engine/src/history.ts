@@ -16,7 +16,7 @@ const FIELDS: (keyof SeasonAverages)[] = [
   "pts", "reb", "ast", "stl", "blk", "fg3m", "fg_pct", "ft_pct", "turnovers", "fga", "fta",
 ];
 /** Made shots: blended the same way, but only from seasons that have them (older snapshots do not). */
-const MADE = ["fgm", "ftm"] as const;
+const MADE = ["fgm", "ftm", "oreb", "dreb", "pf", "fg3a", "dd_rate", "td_rate", "min"] as const;
 
 export function seasonLabel(startYear: number): string {
   return `${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
@@ -42,7 +42,7 @@ export function estimateAverages(
   const ref = startYear(reference);
   const acc = Object.fromEntries(FIELDS.map((f) => [f, 0])) as Record<keyof SeasonAverages, number>;
   let wSum = 0;
-  const made: Record<(typeof MADE)[number], { acc: number; w: number }> = { fgm: { acc: 0, w: 0 }, ftm: { acc: 0, w: 0 } };
+  const made = Object.fromEntries(MADE.map((f) => [f, { acc: 0, w: 0 }])) as Record<(typeof MADE)[number], { acc: number; w: number }>;
   const used: string[] = [];
   recency.forEach((r, back) => {
     const label = seasonLabel(ref - back);
@@ -51,7 +51,7 @@ export function estimateAverages(
     const w = r * Math.min(s.gp, cap);
     for (const f of FIELDS) acc[f] += w * s.averages[f];
     for (const f of MADE) {
-      const v = s.averages[f];
+      const v = f === "min" ? (s.mpg > 0 ? s.mpg : undefined) : s.averages[f];
       if (typeof v === "number") { made[f].acc += w * v; made[f].w += w; }
     }
     wSum += w;

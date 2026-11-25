@@ -1,5 +1,6 @@
 import { simulateWeeks, weeklyTotals, type WeeklyTotals } from "./matchup";
-import { CATEGORIES, type Category, type SeasonAverages } from "./types";
+import type { AnyTotals } from "./anycat";
+import { CATEGORIES, type SeasonAverages } from "./types";
 
 /**
  * Moves are scored by what they do to the weekly win chance (D12): swap the players, re-run the same simulated weeks
@@ -14,10 +15,23 @@ export interface Entry {
   confidence?: "high" | "medium" | "low" | "none";
   /** Games of history the estimate rests on (recency-weighted, capped per season). */
   effectiveGames?: number;
+  /** Per-game base stats, for leagues scored on a category list other than the standard nine (anycat.ts). */
+  base?: import("./anycat").PlayerBase;
 }
 
 /** One scheduled week: games per team and the opponents the roster is simulated against. */
-export interface WeekEnv { start: string | null; gamesFor: (team?: string) => number; opponents: WeeklyTotals[] }
+export interface WeekEnv { start: string | null; gamesFor: (team?: string) => number; opponents: WeeklyTotals[] | AnyTotals[] }
+
+/**
+ * How a roster becomes a weekly win chance. Without one, the nine-category model in matchup.ts is used. A league with
+ * another category list supplies its own (anycat.ts); everything else in this file is the same for both.
+ */
+export interface ScoreEngine {
+  /** Categories this engine scores, in order. */
+  codes: string[];
+  totals(list: Entry[], gamesFor: (team?: string) => number, slots: number): unknown;
+  simulate(me: unknown, opponents: unknown[], o: { weeks: number; seed: number; slots: number }): { weekWin: number; categories: Record<string, number> };
+}
 
 export interface MoveEnv {
   /** Players who count each week. */
@@ -28,29 +42,34 @@ export interface MoveEnv {
   seed: number;
   /** Fills a lineup spot nobody fills: the last player a league of this size would draft. */
   replacement: Entry;
+  engine?: ScoreEngine;
 }
 
-export interface Score { weekWin: number; categories: Record<Category, number> }
+export interface Score { weekWin: number; categories: Record<string, number> }
 
 /** Weekly win chance and per-category win chance of a roster, averaged over the environment's weeks. */
 export function scoreRoster(roster: Entry[], env: MoveEnv, simWeeks = env.simWeeks): Score {
   const pad = Math.max(0, env.slots - roster.length);
   const list = pad > 0 ? [...roster, ...Array<Entry>(pad).fill(env.replacement)] : roster;
   let week = 0;
-  const cats = Object.fromEntries(CATEGORIES.map((c) => [c, 0])) as Record<Category, number>;
+  const codes = env.engine?.codes ?? [...CATEGORIES];
+  const cats: Record<string, number> = Object.fromEntries(codes.map((c) => [c, 0]));
   for (const w of env.weeks) {
-    const totals = weeklyTotals(list.map((p) => ({ averages: p.averages, games: w.gamesFor(p.team), value: p.value })), env.slots);
-    const r = simulateWeeks(totals, w.opponents, { weeks: simWeeks, seed: env.seed, slots: env.slots });
+    const r = env.engine
+      ? env.engine.simulate(env.engine.totals(list, w.gamesFor, env.slots), w.opponents as unknown[], { weeks: simWeeks, seed: env.seed, slots: env.slots })
+      : simulateWeeks(
+          weeklyTotals(list.map((p) => ({ averages: p.averages, games: w.gamesFor(p.team), value: p.value })), env.slots),
+          w.opponents as WeeklyTotals[], { weeks: simWeeks, seed: env.seed, slots: env.slots });
     week += r.weekWin;
-    for (const c of CATEGORIES) cats[c] += r.categories[c];
+    for (const c of codes) cats[c]! += r.categories[c]!;
   }
   const n = env.weeks.length;
-  for (const c of CATEGORIES) cats[c] /= n;
+  for (const c of codes) cats[c]! /= n;
   return { weekWin: week / n, categories: cats };
 }
 
-const diff = (a: Score, b: Score): Record<Category, number> =>
-  Object.fromEntries(CATEGORIES.map((c) => [c, a.categories[c] - b.categories[c]])) as Record<Category, number>;
+const diff = (a: Score, b: Score): Record<string, number> =>
+  Object.fromEntries(Object.keys(a.categories).map((c) => [c, a.categories[c]! - b.categories[c]!]));
 
 export interface Move {
   add: Entry; drop: Entry; after: Score;
@@ -60,7 +79,7 @@ export interface Move {
   dropOnlyDelta: number;
   /** delta minus dropOnlyDelta: what the added player contributes. Only moves where this is above zero are ranked. */
   addDelta: number;
-  categoryDelta: Record<Category, number>;
+  categoryDelta: Record<string, number>;
 }
 /** bench-only: would not enter the lineup. no-gain-from-add: enters, but adds nothing beyond the drop. below-top: ranked worse than the moves shown. */
 export interface Unranked { add: Entry; reason: "bench-only" | "no-gain-from-add" | "below-top" }
@@ -125,7 +144,7 @@ export function rankWaiverMoves(
   return { baseline, moves, unranked };
 }
 
-export interface TradeResult { before: Score; after: Score; delta: number; categoryDelta: Record<Category, number> }
+export interface TradeResult { before: Score; after: Score; delta: number; categoryDelta: Record<string, number> }
 
 /** What a trade does to one side: remove `give`, add `get`. */
 export function evaluateTrade(roster: Entry[], give: Entry[], get: Entry[], env: MoveEnv): TradeResult {

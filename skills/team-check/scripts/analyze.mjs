@@ -6,233 +6,6 @@ import { readFileSync } from "node:fs";
 // src/types.ts
 var CATEGORIES = ["PTS", "REB", "AST", "STL", "BLK", "3PM", "FG%", "FT%", "TO"];
 
-// src/fantasyValue.ts
-var ENGINE_VERSION = "0.3.0";
-function safeDivide(num, den) {
-  return Number.isFinite(den) && den !== 0 && Number.isFinite(num) ? num / den : 0;
-}
-function categoryZ(a, b) {
-  const { means: m, stds: s } = b;
-  return {
-    PTS: safeDivide(a.pts - m.m_pts, s.s_pts),
-    REB: safeDivide(a.reb - m.m_reb, s.s_reb),
-    AST: safeDivide(a.ast - m.m_ast, s.s_ast),
-    STL: safeDivide(a.stl - m.m_stl, s.s_stl),
-    BLK: safeDivide(a.blk - m.m_blk, s.s_blk),
-    "3PM": safeDivide(a.fg3m - m.m_fg3m, s.s_fg3m),
-    "FG%": safeDivide((a.fg_pct - m.m_fg_pct) * a.fga, s.s_fg_imp),
-    "FT%": safeDivide((a.ft_pct - m.m_ft_pct) * a.fta, s.s_ft_imp),
-    TO: -safeDivide(a.turnovers - m.m_tov, s.s_tov)
-  };
-}
-
-// src/history.ts
-var RECENCY_WEIGHTS = [1, 0.6, 0.3];
-var GAMES_CAP = 65;
-var CURRENT_MIN_GAMES = 5;
-var CONFIDENCE_MIN = { high: 100, medium: 50 };
-var FIELDS = [
-  "pts",
-  "reb",
-  "ast",
-  "stl",
-  "blk",
-  "fg3m",
-  "fg_pct",
-  "ft_pct",
-  "turnovers",
-  "fga",
-  "fta"
-];
-var MADE = ["fgm", "ftm"];
-function seasonLabel(startYear) {
-  return `${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
-}
-function startYear(season) {
-  return Number(season.slice(0, 4));
-}
-function estimateAverages(h, reference, opts = {}) {
-  const recency = opts.recency ?? RECENCY_WEIGHTS;
-  const cap = opts.gamesCap ?? GAMES_CAP;
-  const ref = startYear(reference);
-  const acc = Object.fromEntries(FIELDS.map((f) => [f, 0]));
-  let wSum = 0;
-  const made = { fgm: { acc: 0, w: 0 }, ftm: { acc: 0, w: 0 } };
-  const used = [];
-  recency.forEach((r, back) => {
-    const label = seasonLabel(ref - back);
-    const s = h.seasons.find((x) => x.season === label);
-    if (!s || !(s.gp > 0))
-      return;
-    const w = r * Math.min(s.gp, cap);
-    for (const f of FIELDS)
-      acc[f] += w * s.averages[f];
-    for (const f of MADE) {
-      const v = s.averages[f];
-      if (typeof v === "number") {
-        made[f].acc += w * v;
-        made[f].w += w;
-      }
-    }
-    wSum += w;
-    used.push(label);
-  });
-  if (wSum === 0) {
-    const cur = opts.current ? h.seasons.find((x) => x.season === opts.current) : undefined;
-    if (cur && cur.gp >= CURRENT_MIN_GAMES) {
-      const games = Math.min(cur.gp, cap);
-      const confidence2 = games >= CONFIDENCE_MIN.high ? "high" : games >= CONFIDENCE_MIN.medium ? "medium" : "low";
-      return { averages: { ...cur.averages }, confidence: confidence2, effectiveGames: games, seasonsUsed: [cur.season], currentSeasonOnly: true };
-    }
-    return { averages: null, confidence: "none", effectiveGames: 0, seasonsUsed: [] };
-  }
-  const averages = Object.fromEntries(FIELDS.map((f) => [f, acc[f] / wSum]));
-  for (const f of MADE)
-    if (made[f].w > 0)
-      averages[f] = made[f].acc / made[f].w;
-  const confidence = wSum >= CONFIDENCE_MIN.high ? "high" : wSum >= CONFIDENCE_MIN.medium ? "medium" : "low";
-  return { averages, confidence, effectiveGames: wSum, seasonsUsed: used };
-}
-
-// src/assess.ts
-var DEFAULT_CUTOFFS = { elite: 85, strong: 60, neutral: 40 };
-function bandFor(percentile, cut = DEFAULT_CUTOFFS) {
-  if (percentile >= cut.elite)
-    return "elite";
-  if (percentile >= cut.strong)
-    return "strong";
-  if (percentile >= cut.neutral)
-    return "neutral";
-  return "weak";
-}
-function percentileOf(sortedAsc, x) {
-  let below = 0, equal = 0;
-  for (const v of sortedAsc) {
-    if (v < x)
-      below++;
-    else if (v === x)
-      equal++;
-    else
-      break;
-  }
-  return (below + 0.5 * equal) / sortedAsc.length * 100;
-}
-var at = (xs, p) => xs[Math.min(xs.length - 1, Math.floor(p / 100 * xs.length))];
-function assessTeam(roster, baseline, benchmark, opts) {
-  const cut = opts.cutoffs ?? DEFAULT_CUTOFFS;
-  const spots = benchmark.settings.rosterSpots;
-  const zero = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
-  const rows = roster.map((r) => {
-    const est = estimateAverages(r.history, opts.reference, { current: opts.current });
-    const z = est.averages ? categoryZ(est.averages, baseline) : null;
-    const status = r.status ?? "active";
-    const value = z ? CATEGORIES.reduce((s, c) => s + z[c], 0) : CATEGORIES.reduce((s, c) => s + benchmark.poolMean[c], 0);
-    return { r, est, z, status, value };
-  });
-  const actives = rows.filter((x) => x.status === "active").sort((a, b) => b.value - a.value);
-  const counted = new Set(actives.slice(0, spots));
-  const assumptions = [];
-  const players = rows.map((x) => {
-    let note = "";
-    if (x.status === "IL")
-      note = "On IL: not counted.";
-    else if (!counted.has(x))
-      note = "More players than roster spots: not counted.";
-    else if (x.est.confidence === "none")
-      note = "No NBA data (rookie or no recent games): counted as an average rostered player.";
-    else if (x.est.currentSeasonOnly)
-      note = `No completed NBA seasons: judged on this season only (${x.est.effectiveGames.toFixed(0)} games, ${x.est.seasonsUsed[0]}). Small sample, treat with care.`;
-    else if (x.est.confidence === "low")
-      note = `Small sample (${x.est.effectiveGames.toFixed(0)} effective games): treat with care.`;
-    else if (!x.est.seasonsUsed.includes(opts.reference))
-      note = `Estimated from ${x.est.seasonsUsed.join(", ")}; he did not play ${opts.reference}.`;
-    return {
-      name: x.r.name,
-      status: x.status,
-      counted: x.status === "active" && counted.has(x),
-      confidence: x.est.confidence,
-      effectiveGames: x.est.effectiveGames,
-      seasonsUsed: x.est.seasonsUsed,
-      z: x.z,
-      note
-    };
-  });
-  const sums = { ...zero };
-  for (const x of actives.slice(0, spots))
-    for (const c of CATEGORIES)
-      sums[c] += x.z ? x.z[c] : benchmark.poolMean[c];
-  const empty = spots - Math.min(spots, actives.length);
-  for (let i = 0;i < empty; i++)
-    for (const c of CATEGORIES)
-      sums[c] += benchmark.poolMean[c];
-  if (empty > 0)
-    assumptions.push(`${empty} empty roster slot(s) counted as an average rostered player.`);
-  const currentOnly = players.filter((p) => p.counted && rows.find((x) => x.r.name === p.name)?.est.currentSeasonOnly).length;
-  if (currentOnly > 0)
-    assumptions.push(`${currentOnly} player(s) with no completed NBA seasons are judged on this season only; small samples can swing.`);
-  const noData = players.filter((p) => p.counted && p.confidence === "none").length;
-  if (noData > 0)
-    assumptions.push(`${noData} player(s) with no NBA data counted as an average rostered player.`);
-  assumptions.push(`Players are estimated from their last three seasons, weighted by recency (${RECENCY_WEIGHTS.join(" / ")}) and games played (capped at ${GAMES_CAP} per season). Aging and role changes are not modelled.`, `Benchmark: ${benchmark.settings.teams} teams x ${spots} roster spots, ${benchmark.leagues} simulated snake drafts, each pick one of the best ${benchmark.pickWeights.length} remaining. Positions are ignored.`, "Every counted player's production is summed; daily lineup limits are not modelled.", `Bands by percentile among simulated teams: elite >= ${cut.elite}, strong >= ${cut.strong}, neutral >= ${cut.neutral}, otherwise weak.`);
-  const categories = {};
-  for (const c of CATEGORIES) {
-    const b = benchmark.teamSums[c];
-    const percentile = percentileOf(b, sums[c]);
-    categories[c] = { total: sums[c], percentile, band: bandFor(percentile, cut), benchmark: { p15: at(b, 15), median: at(b, 50), p85: at(b, 85) } };
-  }
-  return { categories, players, assumptions, engine_version: ENGINE_VERSION };
-}
-
-// src/baseline.ts
-function std(xs, mean) {
-  return Math.sqrt(xs.reduce((s, x) => s + (x - mean) ** 2, 0) / xs.length);
-}
-var avg = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
-function buildBaseline(players, poolSize) {
-  const pool = [...players].sort((a, b) => b.gp * b.mpg - a.gp * a.mpg).slice(0, poolSize);
-  if (pool.length === 0)
-    throw new Error("buildBaseline: no players");
-  const col = (f) => pool.map(f);
-  const pts = col((p) => p.averages.pts), reb = col((p) => p.averages.reb), ast = col((p) => p.averages.ast);
-  const stl = col((p) => p.averages.stl), blk = col((p) => p.averages.blk), fg3m = col((p) => p.averages.fg3m);
-  const fgp = col((p) => p.averages.fg_pct), ftp = col((p) => p.averages.ft_pct), tov = col((p) => p.averages.turnovers);
-  const m = {
-    m_pts: avg(pts),
-    m_reb: avg(reb),
-    m_ast: avg(ast),
-    m_stl: avg(stl),
-    m_blk: avg(blk),
-    m_fg3m: avg(fg3m),
-    m_fg_pct: avg(fgp),
-    m_ft_pct: avg(ftp),
-    m_tov: avg(tov)
-  };
-  const fgImpact = pool.map((p) => (p.averages.fg_pct - m.m_fg_pct) * p.averages.fga);
-  const ftImpact = pool.map((p) => (p.averages.ft_pct - m.m_ft_pct) * p.averages.fta);
-  return {
-    means: m,
-    stds: {
-      s_pts: std(pts, m.m_pts),
-      s_reb: std(reb, m.m_reb),
-      s_ast: std(ast, m.m_ast),
-      s_stl: std(stl, m.m_stl),
-      s_blk: std(blk, m.m_blk),
-      s_fg3m: std(fg3m, m.m_fg3m),
-      s_tov: std(tov, m.m_tov),
-      s_fg_imp: std(fgImpact, avg(fgImpact)),
-      s_ft_imp: std(ftImpact, avg(ftImpact))
-    }
-  };
-}
-var BLEND_K = 40;
-function blendWeight(teamGames, k = BLEND_K) {
-  return Number.isFinite(teamGames) && teamGames > 0 ? teamGames / (teamGames + k) : 0;
-}
-function blendBaselines(last, current, w) {
-  const mix = (a, b) => Object.fromEntries(Object.keys(a).map((k) => [k, (1 - w) * a[k] + w * b[k]]));
-  return { means: mix(last.means, current.means), stds: mix(last.stds, current.stds) };
-}
-
 // src/simulate.ts
 var DEFAULT_PICK_WEIGHTS = [0.45, 0.25, 0.15, 0.1, 0.05];
 function mulberry32(seed) {
@@ -287,40 +60,6 @@ function simulateBenchmark(players, settings, opts = {}) {
     sums[c].sort((a, b) => a - b);
   const poolMean = Object.fromEntries(CATEGORIES.map((c) => [c, pool.reduce((t, p) => t + p.z[c], 0) / pool.length]));
   return { settings, leagues, pickWeights: weights, teamSums: sums, poolMean };
-}
-
-// src/snapshot.ts
-var SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
-function nameTokens(s) {
-  const t = s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[.'’,]/g, "").replace(/[-_]/g, " ").split(/\s+/).filter(Boolean);
-  return t.filter((x, i) => !(SUFFIXES.has(x) && i > 0));
-}
-function prefixMatch(q, cand) {
-  const used = new Set;
-  return q.every((w) => {
-    const i = cand.findIndex((c, k) => !used.has(k) && c.startsWith(w));
-    if (i < 0)
-      return false;
-    used.add(i);
-    return true;
-  });
-}
-function resolvePlayer(query, players) {
-  const q = nameTokens(query);
-  if (q.length === 0)
-    return { status: "not_found" };
-  const key = q.join(" ");
-  const pick = (hits) => hits.length === 1 ? { status: "matched", player: hits[0] } : hits.length > 1 ? { status: "ambiguous", candidates: hits } : { status: "not_found" };
-  const alias = players.filter((p) => (p.aliases ?? []).some((a) => nameTokens(a).join(" ") === key));
-  if (alias.length)
-    return pick(alias);
-  const exact = players.filter((p) => nameTokens(p.name).join(" ") === key);
-  if (exact.length)
-    return pick(exact);
-  return pick(players.filter((p) => prefixMatch(q, nameTokens(p.name))));
-}
-function historyOf(p) {
-  return { player_id: p.id, name: p.name, seasons: p.seasons };
 }
 
 // src/matchup.ts
@@ -493,25 +232,903 @@ function mondayOf(isoDate) {
   return d.toISOString().slice(0, 10);
 }
 
+// src/lucktable.ts
+var LUCK_STATS = ["minutes", "fgm", "fga", "ftm", "fta", "fg3m", "fg3a", "oreb", "dreb", "ast", "stl", "blk", "turnovers", "pf"];
+var BASE_LUCK_SHARE = { minutes: 0.0425, fgm: 0.0819, fga: 0.0653, ftm: 0.1633, fta: 0.1523, fg3m: 0.1442, fg3a: 0.0914, oreb: 0.1657, dreb: 0.0987, ast: 0.1088, stl: 0.1749, blk: 0.2295, turnovers: 0.1344, pf: 0.1195 };
+var BASE_LUCK_CORRELATION = [
+  [1, 0.514, 0.622, 0.25, 0.259, 0.325, 0.459, 0.251, 0.47, 0.354, 0.202, 0.19, 0.255, 0.196],
+  [0.514, 1, 0.791, 0.199, 0.204, 0.552, 0.458, 0.2, 0.245, 0.211, 0.105, 0.112, 0.103, 0.065],
+  [0.622, 0.791, 1, 0.236, 0.239, 0.417, 0.648, 0.283, 0.306, 0.232, 0.155, 0.13, 0.167, 0.062],
+  [0.25, 0.199, 0.236, 1, 0.951, 0.044, 0.121, 0.091, 0.106, 0.062, 0.033, 0.045, 0.145, 0.219],
+  [0.259, 0.204, 0.239, 0.951, 1, 0.038, 0.113, 0.103, 0.124, 0.043, 0.037, 0.042, 0.155, 0.219],
+  [0.325, 0.552, 0.417, 0.044, 0.038, 1, 0.717, 0.02, 0.121, 0.116, 0.028, 0.048, 0.08, 0.044],
+  [0.459, 0.458, 0.648, 0.121, 0.113, 0.717, 1, 0.062, 0.174, 0.141, 0.096, 0.079, 0.119, 0.055],
+  [0.251, 0.2, 0.283, 0.091, 0.103, 0.02, 0.062, 1, 0.156, 0.057, 0.083, 0.041, 0.12, 0.07],
+  [0.47, 0.245, 0.306, 0.106, 0.124, 0.121, 0.174, 0.156, 1, 0.255, 0.078, 0.179, 0.15, 0.029],
+  [0.354, 0.211, 0.232, 0.062, 0.043, 0.116, 0.141, 0.057, 0.255, 1, 0.084, 0.103, 0.102, -0.013],
+  [0.202, 0.105, 0.155, 0.033, 0.037, 0.028, 0.096, 0.083, 0.078, 0.084, 1, 0.072, 0.102, 0.072],
+  [0.19, 0.112, 0.13, 0.045, 0.042, 0.048, 0.079, 0.041, 0.179, 0.103, 0.072, 1, 0.022, 0.02],
+  [0.255, 0.103, 0.167, 0.145, 0.155, 0.08, 0.119, 0.12, 0.15, 0.102, 0.102, 0.022, 1, 0.2],
+  [0.196, 0.065, 0.062, 0.219, 0.219, 0.044, 0.055, 0.07, 0.029, -0.013, 0.072, 0.02, 0.2, 1]
+];
+
+// src/anycat.ts
+var ZERO = () => ({
+  minutes: 0,
+  fgm: 0,
+  fga: 0,
+  ftm: 0,
+  fta: 0,
+  fg3m: 0,
+  fg3a: 0,
+  oreb: 0,
+  dreb: 0,
+  ast: 0,
+  stl: 0,
+  blk: 0,
+  turnovers: 0,
+  pf: 0,
+  dd: 0,
+  td: 0
+});
+var BASE_KEYS = Object.keys(ZERO());
+var def = (code, label, num, extra = {}) => ({ code, label, num, ...extra });
+var REGISTRY = [
+  def("MIN", "Minutes played", { minutes: 1 }),
+  def("FGM", "Field goals made", { fgm: 1 }),
+  def("FGA", "Field goals attempted", { fga: 1 }),
+  def("FG%", "Field goal percentage", { fgm: 1 }, { den: { fga: 1 } }),
+  def("FTM", "Free throws made", { ftm: 1 }),
+  def("FTA", "Free throws attempted", { fta: 1 }),
+  def("FT%", "Free throw percentage", { ftm: 1 }, { den: { fta: 1 } }),
+  def("3PM", "3-pointers made", { fg3m: 1 }),
+  def("3PA", "3-pointers attempted", { fg3a: 1 }),
+  def("3P%", "3-point percentage", { fg3m: 1 }, { den: { fg3a: 1 } }),
+  def("PTS", "Points", { fgm: 2, fg3m: 1, ftm: 1 }),
+  def("REB", "Rebounds", { oreb: 1, dreb: 1 }),
+  def("OREB", "Offensive rebounds", { oreb: 1 }),
+  def("DREB", "Defensive rebounds", { dreb: 1 }),
+  def("AST", "Assists", { ast: 1 }),
+  def("STL", "Steals", { stl: 1 }),
+  def("BLK", "Blocks", { blk: 1 }),
+  def("TO", "Turnovers", { turnovers: 1 }, { lower: true }),
+  def("PF", "Personal fouls", { pf: 1 }, { lower: true }),
+  def("A/T", "Assist to turnover ratio", { ast: 1 }, { den: { turnovers: 1 } }),
+  def("DD", "Double-doubles", { dd: 1 }),
+  def("TD", "Triple-doubles", { td: 1 })
+];
+var BY_CODE = new Map(REGISTRY.map((d) => [d.code, d]));
+var SUPPORTED_CATEGORIES = REGISTRY.map((d) => d.code);
+var ALIASES = {};
+var alias = (code, ...names) => {
+  for (const n of [code, ...names])
+    ALIASES[norm(n)] = code;
+};
+function norm(s) {
+  return s.toUpperCase().replace(/[^A-Z0-9%/]/g, "");
+}
+alias("MIN", "Minutes", "Minutes Played");
+alias("FGM", "Field Goals Made", "FG Made");
+alias("FGA", "Field Goals Attempted", "FG Attempted");
+alias("FG%", "Field Goal Percentage", "FG Pct");
+alias("FTM", "Free Throws Made");
+alias("FTA", "Free Throws Attempted");
+alias("FT%", "Free Throw Percentage", "FT Pct");
+alias("3PM", "3PTM", "3PT", "3-point Shots Made", "3-Pointers Made", "Three Pointers Made", "Threes", "3PTS");
+alias("3PA", "3PTA", "3-point Shots Attempted", "3-Pointers Attempted");
+alias("3P%", "3PT%", "3-point Percentage", "3-Point Field Goal Percentage");
+alias("PTS", "Points", "Points Scored");
+alias("REB", "Rebounds", "Total Rebounds");
+alias("OREB", "Offensive Rebounds");
+alias("DREB", "Defensive Rebounds");
+alias("AST", "Assists");
+alias("STL", "ST", "Steals");
+alias("BLK", "BS", "Blocks", "Blocked Shots");
+alias("TO", "TOV", "Turnovers");
+alias("PF", "Fouls", "Personal Fouls");
+alias("A/T", "AST/TO", "Assist/Turnover Ratio", "Assist to Turnover Ratio");
+alias("DD", "Double Doubles", "Double-Doubles", "Double Double");
+alias("TD", "Triple Doubles", "Triple-Doubles", "Triple Double");
+function parseCategories(names) {
+  const unknown = [];
+  const out = [];
+  for (const n of names) {
+    const code = ALIASES[norm(n)];
+    if (!code)
+      unknown.push(n);
+    else if (!out.includes(code))
+      out.push(code);
+  }
+  if (unknown.length)
+    throw new Error(`unsupported categories: ${unknown.join(", ")}. Supported: ${SUPPORTED_CATEGORIES.join(" ")}`);
+  if (out.length < 2)
+    throw new Error("a league needs at least 2 categories");
+  return out;
+}
+var STANDARD_NINE = ["PTS", "REB", "AST", "STL", "BLK", "3PM", "FG%", "FT%", "TO"];
+var isStandardNine = (codes) => codes.length === 9 && STANDARD_NINE.every((c) => codes.includes(c));
+var lin = (c, t) => {
+  let s = 0;
+  for (const k of Object.keys(c))
+    s += c[k] * t[k];
+  return s;
+};
+var defOf = (code) => {
+  const d = BY_CODE.get(code);
+  if (!d)
+    throw new Error(`unknown category ${code}`);
+  return d;
+};
+var isLowerCategory = (code) => Boolean(defOf(code).lower);
+function categoryValue(code, t) {
+  const d = defOf(code);
+  const n = lin(d.num, t);
+  if (!d.den)
+    return n;
+  const m = lin(d.den, t);
+  return m > 0 ? n / m : 0;
+}
+function neededStats(codes) {
+  const s = new Set;
+  for (const c of codes) {
+    const d = defOf(c);
+    for (const k of Object.keys(d.num))
+      s.add(k);
+    for (const k of Object.keys(d.den ?? {}))
+      s.add(k);
+  }
+  return [...s];
+}
+function baseOf(a, needed) {
+  const b = ZERO();
+  const get = {
+    minutes: a.min,
+    fgm: a.fgm ?? a.fga * a.fg_pct,
+    fga: a.fga,
+    ftm: a.ftm ?? a.fta * a.ft_pct,
+    fta: a.fta,
+    fg3m: a.fg3m,
+    fg3a: a.fg3a,
+    oreb: a.oreb,
+    dreb: a.dreb,
+    ast: a.ast,
+    stl: a.stl,
+    blk: a.blk,
+    turnovers: a.turnovers,
+    pf: a.pf,
+    dd: a.dd_rate,
+    td: a.td_rate
+  };
+  for (const k of BASE_KEYS) {
+    const v = get[k];
+    if (v === undefined && needed.includes(k))
+      throw new Error(`the data file has no ${k} yet (needed for this league's categories)`);
+    b[k] = v ?? 0;
+  }
+  return b;
+}
+var avg = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
+var stdOf = (xs, m) => Math.sqrt(xs.reduce((s, x) => s + (x - m) ** 2, 0) / xs.length) || 1;
+function buildAnyBaseline(pool, codes, poolSize) {
+  const top = [...pool].sort((a, b) => b.gp * b.mpg - a.gp * a.mpg).slice(0, poolSize);
+  if (top.length === 0)
+    throw new Error("buildAnyBaseline: no players");
+  const out = {};
+  for (const c of codes) {
+    const d = defOf(c);
+    if (!d.den) {
+      const xs = top.map((p) => lin(d.num, p.base)), m = avg(xs);
+      out[c] = { mean: m, std: stdOf(xs, m) };
+    } else {
+      const num = top.reduce((s, p) => s + lin(d.num, p.base), 0), den = top.reduce((s, p) => s + lin(d.den, p.base), 0);
+      const r = den > 0 ? num / den : 0;
+      const imp = top.map((p) => lin(d.num, p.base) - r * lin(d.den, p.base));
+      out[c] = { mean: 0, std: stdOf(imp, avg(imp)), ratio: r };
+    }
+  }
+  return out;
+}
+function anyValue(base, codes, bl) {
+  let v = 0;
+  for (const c of codes) {
+    const d = defOf(c), b = bl[c];
+    const z = d.den ? (lin(d.num, base) - b.ratio * lin(d.den, base)) / b.std : (lin(d.num, base) - b.mean) / b.std;
+    v += d.lower ? -z : z;
+  }
+  return v;
+}
+function chances(p, games, into) {
+  if (!(p > 0) || !(games > 0))
+    return;
+  const n = Math.floor(games), frac = games - n;
+  for (let i = 0;i < n; i++)
+    into.push(p);
+  if (frac > 0.000000001)
+    into.push(p * frac);
+}
+function anyTotals(players, slots) {
+  const lineup = [...players].sort((a, b) => b.value - a.value).slice(0, slots);
+  const t = ZERO();
+  const ddGames = [], tdGames = [];
+  for (const p of lineup) {
+    for (const k of BASE_KEYS)
+      t[k] += p.base[k] * p.games;
+    chances(p.base.dd, p.games, ddGames);
+    chances(p.base.td, p.games, tdGames);
+  }
+  return { t, ddGames, tdGames };
+}
+function scaledAny(a, k) {
+  const t = ZERO();
+  for (const key of BASE_KEYS)
+    t[key] = a.t[key] * k;
+  return { t, ddGames: a.ddGames.map((p) => p * k), tdGames: a.tdGames.map((p) => p * k) };
+}
+function gaussianFrom(rand) {
+  let spare = null;
+  return () => {
+    if (spare !== null) {
+      const s = spare;
+      spare = null;
+      return s;
+    }
+    let u = 0;
+    while (u === 0)
+      u = rand();
+    const v = rand(), r = Math.sqrt(-2 * Math.log(u));
+    spare = r * Math.sin(2 * Math.PI * v);
+    return r * Math.cos(2 * Math.PI * v);
+  };
+}
+function choleskyOf(m) {
+  const n = m.length;
+  const L = Array.from({ length: n }, () => Array(n).fill(0));
+  for (let i = 0;i < n; i++)
+    for (let j = 0;j <= i; j++) {
+      let s = m[i][j];
+      for (let k = 0;k < j; k++)
+        s -= L[i][k] * L[j][k];
+      if (i === j) {
+        if (s <= 0)
+          throw new Error("BASE_LUCK_CORRELATION is not positive definite");
+        L[i][j] = Math.sqrt(s);
+      } else
+        L[i][j] = s / L[j][j];
+    }
+  return L;
+}
+var LUCK_CHOL = choleskyOf(BASE_LUCK_CORRELATION);
+function anyOutcome(a, luck, g, rand, scale, needDD, needTD, extra) {
+  const t = { ...a.t };
+  if (luck) {
+    const z = LUCK_STATS.map(() => g());
+    LUCK_STATS.forEach((k, i) => {
+      const c = LUCK_CHOL[i].reduce((s, v, j) => s + v * z[j], 0);
+      t[k] = Math.max(0, t[k] * (1 + BASE_LUCK_SHARE[k] * scale * c));
+    });
+    if (needDD) {
+      let n = 0;
+      for (const p of a.ddGames)
+        if (rand() < p)
+          n++;
+      t.dd = n;
+    }
+    if (needTD) {
+      let n = 0;
+      for (const p of a.tdGames)
+        if (rand() < p)
+          n++;
+      t.td = n;
+    }
+  }
+  if (extra)
+    for (const k of BASE_KEYS)
+      t[k] += extra[k];
+  return t;
+}
+function simulateAny(me, opponents, codes, opts = {}) {
+  if (opponents.length === 0)
+    throw new Error("simulateAny: no opponents");
+  const weeks = opts.weeks ?? DEFAULT_WEEKS;
+  const luck = opts.luck ?? true;
+  const rand = mulberry32(opts.seed ?? 1);
+  const g = gaussianFrom(rand);
+  const scale = luckScale(opts.slots ?? LUCK_REFERENCE_SLOTS);
+  const needDD = codes.includes("DD"), needTD = codes.includes("TD");
+  const defs = codes.map(defOf);
+  const wins = Array(codes.length).fill(0);
+  const dist = Array(codes.length + 1).fill(0);
+  let win = 0, tie = 0;
+  const side = (a, s) => s ? anyOutcome(s.remaining, luck && s.share > 0, g, rand, s.share > 0 ? scale / Math.sqrt(s.share) : scale, needDD, needTD, s.banked) : anyOutcome(a, luck, g, rand, scale, needDD, needTD);
+  for (let w = 0;w < weeks; w++) {
+    const opp = opponents[opponents.length === 1 ? 0 : Math.floor(rand() * opponents.length)];
+    const a = side(me, opts.progress?.me), b = side(opp, opts.progress?.opponent);
+    let won = 0, lost = 0;
+    defs.forEach((d, i) => {
+      const x = categoryValue(d.code, a), y = categoryValue(d.code, b);
+      const better = d.lower ? x < y : x > y, worse = d.lower ? x > y : x < y;
+      if (better) {
+        wins[i]++;
+        won++;
+      } else if (worse)
+        lost++;
+    });
+    dist[won]++;
+    if (won > lost)
+      win++;
+    else if (won === lost)
+      tie++;
+  }
+  return {
+    weeks,
+    categories: Object.fromEntries(codes.map((c, i) => [c, wins[i] / weeks])),
+    weekWin: win / weeks,
+    weekTie: tie / weeks,
+    weekLoss: (weeks - win - tie) / weeks,
+    distribution: dist.map((x) => x / weeks)
+  };
+}
+function typicalAnyOpponents(players, settings, slots, gamesFor, opts = {}) {
+  const { teams, rosterSpots } = settings;
+  const poolSize = teams * rosterSpots;
+  const pool = [...players].sort((a, b) => b.value - a.value).slice(0, poolSize);
+  if (pool.length < poolSize)
+    throw new Error(`typicalAnyOpponents: need ${poolSize} players, got ${pool.length}`);
+  const rand = mulberry32((opts.seed ?? 1) + 7919);
+  const weights = opts.pickWeights ?? DEFAULT_PICK_WEIGHTS;
+  const out = [];
+  for (let l = 0;l < (opts.leagues ?? 300); l++) {
+    const remaining = pool.slice();
+    const rosters = Array.from({ length: teams }, () => []);
+    for (let round = 0;round < rosterSpots; round++)
+      for (let k = 0;k < teams; k++) {
+        const t = round % 2 === 0 ? k : teams - 1 - k;
+        rosters[t].push(remaining.splice(pickIndex(remaining.length, weights, rand), 1)[0]);
+      }
+    for (const r of rosters)
+      out.push(anyTotals(r.map((p) => ({ base: p.base, games: gamesFor(p.team), value: p.value })), slots));
+  }
+  return out;
+}
+
+// src/baseline.ts
+function std(xs, mean) {
+  return Math.sqrt(xs.reduce((s, x) => s + (x - mean) ** 2, 0) / xs.length);
+}
+var avg2 = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
+function buildBaseline(players, poolSize) {
+  const pool = [...players].sort((a, b) => b.gp * b.mpg - a.gp * a.mpg).slice(0, poolSize);
+  if (pool.length === 0)
+    throw new Error("buildBaseline: no players");
+  const col = (f) => pool.map(f);
+  const pts = col((p) => p.averages.pts), reb = col((p) => p.averages.reb), ast = col((p) => p.averages.ast);
+  const stl = col((p) => p.averages.stl), blk = col((p) => p.averages.blk), fg3m = col((p) => p.averages.fg3m);
+  const fgp = col((p) => p.averages.fg_pct), ftp = col((p) => p.averages.ft_pct), tov = col((p) => p.averages.turnovers);
+  const m = {
+    m_pts: avg2(pts),
+    m_reb: avg2(reb),
+    m_ast: avg2(ast),
+    m_stl: avg2(stl),
+    m_blk: avg2(blk),
+    m_fg3m: avg2(fg3m),
+    m_fg_pct: avg2(fgp),
+    m_ft_pct: avg2(ftp),
+    m_tov: avg2(tov)
+  };
+  const fgImpact = pool.map((p) => (p.averages.fg_pct - m.m_fg_pct) * p.averages.fga);
+  const ftImpact = pool.map((p) => (p.averages.ft_pct - m.m_ft_pct) * p.averages.fta);
+  return {
+    means: m,
+    stds: {
+      s_pts: std(pts, m.m_pts),
+      s_reb: std(reb, m.m_reb),
+      s_ast: std(ast, m.m_ast),
+      s_stl: std(stl, m.m_stl),
+      s_blk: std(blk, m.m_blk),
+      s_fg3m: std(fg3m, m.m_fg3m),
+      s_tov: std(tov, m.m_tov),
+      s_fg_imp: std(fgImpact, avg2(fgImpact)),
+      s_ft_imp: std(ftImpact, avg2(ftImpact))
+    }
+  };
+}
+var BLEND_K = 40;
+function blendWeight(teamGames, k = BLEND_K) {
+  return Number.isFinite(teamGames) && teamGames > 0 ? teamGames / (teamGames + k) : 0;
+}
+function blendBaselines(last, current, w) {
+  const mix = (a, b) => Object.fromEntries(Object.keys(a).map((k) => [k, (1 - w) * a[k] + w * b[k]]));
+  return { means: mix(last.means, current.means), stds: mix(last.stds, current.stds) };
+}
+
+// src/history.ts
+var RECENCY_WEIGHTS = [1, 0.6, 0.3];
+var GAMES_CAP = 65;
+var CURRENT_MIN_GAMES = 5;
+var CONFIDENCE_MIN = { high: 100, medium: 50 };
+var FIELDS = [
+  "pts",
+  "reb",
+  "ast",
+  "stl",
+  "blk",
+  "fg3m",
+  "fg_pct",
+  "ft_pct",
+  "turnovers",
+  "fga",
+  "fta"
+];
+var MADE = ["fgm", "ftm", "oreb", "dreb", "pf", "fg3a", "dd_rate", "td_rate", "min"];
+function seasonLabel(startYear) {
+  return `${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
+}
+function startYear(season) {
+  return Number(season.slice(0, 4));
+}
+function estimateAverages(h, reference, opts = {}) {
+  const recency = opts.recency ?? RECENCY_WEIGHTS;
+  const cap = opts.gamesCap ?? GAMES_CAP;
+  const ref = startYear(reference);
+  const acc = Object.fromEntries(FIELDS.map((f) => [f, 0]));
+  let wSum = 0;
+  const made = Object.fromEntries(MADE.map((f) => [f, { acc: 0, w: 0 }]));
+  const used = [];
+  recency.forEach((r, back) => {
+    const label = seasonLabel(ref - back);
+    const s = h.seasons.find((x) => x.season === label);
+    if (!s || !(s.gp > 0))
+      return;
+    const w = r * Math.min(s.gp, cap);
+    for (const f of FIELDS)
+      acc[f] += w * s.averages[f];
+    for (const f of MADE) {
+      const v = f === "min" ? s.mpg > 0 ? s.mpg : undefined : s.averages[f];
+      if (typeof v === "number") {
+        made[f].acc += w * v;
+        made[f].w += w;
+      }
+    }
+    wSum += w;
+    used.push(label);
+  });
+  if (wSum === 0) {
+    const cur = opts.current ? h.seasons.find((x) => x.season === opts.current) : undefined;
+    if (cur && cur.gp >= CURRENT_MIN_GAMES) {
+      const games = Math.min(cur.gp, cap);
+      const confidence2 = games >= CONFIDENCE_MIN.high ? "high" : games >= CONFIDENCE_MIN.medium ? "medium" : "low";
+      return { averages: { ...cur.averages }, confidence: confidence2, effectiveGames: games, seasonsUsed: [cur.season], currentSeasonOnly: true };
+    }
+    return { averages: null, confidence: "none", effectiveGames: 0, seasonsUsed: [] };
+  }
+  const averages = Object.fromEntries(FIELDS.map((f) => [f, acc[f] / wSum]));
+  for (const f of MADE)
+    if (made[f].w > 0)
+      averages[f] = made[f].acc / made[f].w;
+  const confidence = wSum >= CONFIDENCE_MIN.high ? "high" : wSum >= CONFIDENCE_MIN.medium ? "medium" : "low";
+  return { averages, confidence, effectiveGames: wSum, seasonsUsed: used };
+}
+
+// src/snapshot.ts
+var SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
+function nameTokens(s) {
+  const t = s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[.'’,]/g, "").replace(/[-_]/g, " ").split(/\s+/).filter(Boolean);
+  return t.filter((x, i) => !(SUFFIXES.has(x) && i > 0));
+}
+function prefixMatch(q, cand) {
+  const used = new Set;
+  return q.every((w) => {
+    const i = cand.findIndex((c, k) => !used.has(k) && c.startsWith(w));
+    if (i < 0)
+      return false;
+    used.add(i);
+    return true;
+  });
+}
+function resolvePlayer(query, players) {
+  const q = nameTokens(query);
+  if (q.length === 0)
+    return { status: "not_found" };
+  const key = q.join(" ");
+  const pick = (hits) => hits.length === 1 ? { status: "matched", player: hits[0] } : hits.length > 1 ? { status: "ambiguous", candidates: hits } : { status: "not_found" };
+  const alias2 = players.filter((p) => (p.aliases ?? []).some((a) => nameTokens(a).join(" ") === key));
+  if (alias2.length)
+    return pick(alias2);
+  const exact = players.filter((p) => nameTokens(p.name).join(" ") === key);
+  if (exact.length)
+    return pick(exact);
+  return pick(players.filter((p) => prefixMatch(q, nameTokens(p.name))));
+}
+function historyOf(p) {
+  return { player_id: p.id, name: p.name, seasons: p.seasons };
+}
+
+// src/analyzeAny.ts
+var band = (p) => p >= 85 ? "elite" : p >= 60 ? "strong" : p >= 40 ? "neutral" : "weak";
+var OPTIONAL_FIELD = { fg3a: "fg3a", oreb: "oreb", dreb: "dreb", pf: "pf", dd: "dd_rate", td: "td_rate" };
+function requireData(snapshot, codes) {
+  for (const k of neededStats(codes)) {
+    const f = OPTIONAL_FIELD[k];
+    if (f && !snapshot.players.some((p) => p.seasons.some((s) => s.averages[f] !== undefined)))
+      throw new Error(`the data file has no ${f} yet, which this league's categories need. It is added by the nightly update; try again after it runs.`);
+  }
+}
+function mixBaseline(a, b, w) {
+  return Object.fromEntries(Object.keys(a).map((c) => {
+    const x = a[c], y = b[c];
+    return [c, { mean: (1 - w) * x.mean + w * y.mean, std: (1 - w) * x.std + w * y.std, ...x.ratio !== undefined ? { ratio: (1 - w) * x.ratio + w * (y.ratio ?? x.ratio) } : {} }];
+  }));
+}
+function estimateAll(snapshot, reference, current, codes, baseline) {
+  const out = new Map;
+  for (const p of snapshot.players) {
+    const e = estimateAverages(historyOf(p), reference, { current });
+    if (!e.averages)
+      continue;
+    const base = baseOf(e.averages, []);
+    out.set(p.id, { id: p.id, name: p.name, averages: e.averages, team: p.team, value: anyValue(base, codes, baseline), confidence: e.confidence, effectiveGames: e.effectiveGames, base });
+  }
+  return out;
+}
+var engineFor = (codes) => ({
+  codes,
+  totals: (list, gamesFor, slots) => anyTotals(list.map((p) => ({ base: p.base, games: gamesFor(p.team), value: p.value })), slots),
+  simulate: (me, opps, o) => {
+    const r = simulateAny(me, opps, codes, o);
+    return { weekWin: r.weekWin, categories: r.categories };
+  }
+});
+function analyzeAny(input, snapshot, codes) {
+  const { teams, roster_spots } = input.league;
+  requireData(snapshot, codes);
+  const reference = input.reference ?? snapshot.reference_season;
+  const current = seasonLabel(startYear(reference) + 1);
+  const poolSize = teams * roster_spots;
+  const seasonPool = (season) => {
+    const out2 = [];
+    for (const p of snapshot.players) {
+      const s = p.seasons.find((x) => x.season === season);
+      if (s && s.mpg > 0 && s.gp > 0)
+        out2.push({ base: baseOf({ ...s.averages, min: s.mpg }, []), gp: s.gp, mpg: s.mpg });
+    }
+    return out2;
+  };
+  const refPool = seasonPool(reference), curPool = seasonPool(current);
+  if (refPool.length < poolSize)
+    throw new Error(`snapshot has only ${refPool.length} players for ${reference}; need at least ${poolSize}`);
+  let baseline = buildAnyBaseline(refPool, codes, poolSize);
+  const teamGames = input.team_games ?? curPool.reduce((m, p) => Math.max(m, p.gp), 0);
+  const w = curPool.length >= poolSize ? blendWeight(teamGames) : 0;
+  if (w > 0)
+    baseline = mixBaseline(baseline, buildAnyBaseline(curPool, codes, poolSize), w);
+  const estimated = estimateAll(snapshot, reference, current, codes, baseline);
+  const pool = [...estimated.values()].sort((a, b) => b.value - a.value);
+  if (pool.length < poolSize)
+    throw new Error(`snapshot has only ${pool.length} players; need at least ${poolSize}`);
+  const engine = engineFor(codes);
+  const seed = input.seed ?? 1;
+  const assumptions = [
+    `This league scores ${codes.join(", ")}. Players are valued, and typical opponents drafted, on those categories only.`,
+    `Players are estimated from their last three seasons, weighted by recency and games played. Positions are ignored. Week-to-week luck was measured on 2025-26 weekly results for each base stat (made and attempted shots, rebounds by kind, assists, steals, blocks, turnovers, fouls, minutes); double-doubles and triple-doubles are sampled game by game from each player's own rate.`,
+    ...w > 0 ? [`League baseline: ${Math.round((1 - w) * 100)}% ${reference}, ${Math.round(w * 100)}% ${current} (season blend after ${teamGames} games).`] : []
+  ];
+  const scheduleWeek = (start) => snapshot.schedule?.weeks.find((x) => x.start === start);
+  const gamesIn = (games) => (team) => games && team ? games[team] ?? 0 : DEFAULT_WEEK_GAMES;
+  const names = [];
+  const thisMonday = mondayOf(snapshot.generated_at);
+  const wk0 = scheduleWeek(thisMonday);
+  const slots0 = input.matchup?.lineup_slots ?? input.waiver?.lineup_slots ?? input.trade?.lineup_slots ?? roster_spots;
+  const myEntries = resolveList(input.roster, snapshot, estimated, names);
+  const typical0 = typicalAnyOpponents(pool, { teams, rosterSpots: roster_spots }, slots0, gamesIn(wk0?.games ?? null), { leagues: 300, seed });
+  const mine0 = anyTotals(myEntries.map((e) => ({ base: e.base, games: gamesIn(wk0?.games ?? null)(e.team), value: e.value })), slots0);
+  const ranking = codes.map((c) => {
+    const mineV = categoryValue(c, mine0.t);
+    const worse = typical0.filter((o) => isLowerCategory(c) ? categoryValue(c, o.t) > mineV : categoryValue(c, o.t) < mineV).length;
+    const percentile = Math.round(100 * worse / typical0.length);
+    return { category: c, band: band(percentile), percentile };
+  }).sort((a, b) => b.percentile - a.percentile);
+  const out = {
+    custom_categories: true,
+    categories_used: codes,
+    snapshot: { generated_at: snapshot.generated_at, reference_season: snapshot.reference_season },
+    league: input.league,
+    names,
+    ranking,
+    assumptions
+  };
+  if (input.matchup)
+    out.matchup = runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thisMonday);
+  if (input.waiver || input.trade) {
+    const st = anyMoveSetup(input, snapshot, codes, estimated, pool, engine, seed);
+    if (input.waiver)
+      out.waiver = waiverWith(input, snapshot, st);
+    if (input.trade)
+      out.trade = tradeWith(input, snapshot, st);
+  }
+  return out;
+}
+function anyMoveSetup(input, snapshot, codes, estimated, pool, engine, seed) {
+  const { teams, roster_spots } = input.league;
+  const common = input.waiver ?? input.trade;
+  const slots = common.lineup_slots ?? roster_spots;
+  if (!Number.isInteger(slots) || slots < 1 || slots > 20)
+    throw new Error("lineup_slots must be a whole number from 1 to 20");
+  const horizon = Math.max(1, Math.min(4, common.horizon_weeks ?? 2));
+  const simWeeks = common.weeks ?? 6000;
+  const replacement = pool[teams * roster_spots - 1];
+  const first = mondayOf(snapshot.generated_at);
+  const scheduled = (snapshot.schedule?.weeks ?? []).filter((x) => x.start >= first).slice(0, horizon);
+  const assumptions = [`Categories scored: ${codes.join(", ")}.`];
+  const mk = (start, games) => {
+    const gamesFor = (team) => games && team ? games[team] ?? 0 : DEFAULT_WEEK_GAMES;
+    return { start, gamesFor, opponents: typicalAnyOpponents(pool, { teams, rosterSpots: roster_spots }, slots, gamesFor, { leagues: 150, seed }) };
+  };
+  const weeks = scheduled.length > 0 ? scheduled.map((x) => mk(x.start, x.games)) : [mk(null, null)];
+  const gamesSource = scheduled.length > 0 ? "schedule" : "assumed";
+  for (const x of scheduled)
+    if (x.tbd_slots)
+      assumptions.push(`WARNING: ${x.tbd_slots} game slot(s) in the week of ${x.start} are still "TBD" in the NBA schedule, so some teams' game counts may be too low.`);
+  assumptions.push(gamesSource === "schedule" ? `Averaged over ${weeks.length} week(s) starting ${weeks[0].start}, counting each player's real games from the NBA schedule.` : `No schedule in the data, so every player gets an average week of ${DEFAULT_WEEK_GAMES} games.`, `Each score is a weekly win chance (more categories won than lost) against typical opponents (${weeks[0].opponents.length} teams from simulated ${teams}-team drafts on this league's categories, positions ignored), ${simWeeks} simulated weeks with a fixed seed. ` + `A move is scored by re-running the same weeks with the roster changed. Injuries, rest days and lineup moves during the week are not modelled. An empty lineup spot is filled by a replacement-level player.`);
+  const env = { slots, weeks, simWeeks, seed, replacement, engine };
+  return { env, estimated, weeksUsed: weeks.map((x) => x.start ?? "assumed"), gamesSource, scheduleIncomplete: scheduled.some((x) => (x.tbd_slots ?? 0) > 0), assumptions };
+}
+var ZERO_BASE = () => ({
+  minutes: 0,
+  fgm: 0,
+  fga: 0,
+  ftm: 0,
+  fta: 0,
+  fg3m: 0,
+  fg3a: 0,
+  oreb: 0,
+  dreb: 0,
+  ast: 0,
+  stl: 0,
+  blk: 0,
+  turnovers: 0,
+  pf: 0,
+  dd: 0,
+  td: 0
+});
+function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thisMonday) {
+  const m = input.matchup;
+  const { teams, roster_spots } = input.league;
+  const slots = m.lineup_slots ?? roster_spots;
+  if (!Number.isInteger(slots) || slots < 1 || slots > 20)
+    throw new Error("matchup.lineup_slots must be a whole number from 1 to 20");
+  const assumptions = [];
+  const sf = m.so_far;
+  const need = neededStats(codes);
+  if (sf) {
+    if (!m.opponent || m.opponent.length === 0)
+      throw new Error("matchup.so_far needs a real matchup.opponent");
+    if (sf.games_left) {
+      for (const [t, n] of Object.entries(sf.games_left))
+        if (!(Number.isInteger(n) && n >= 0 && n <= 7))
+          throw new Error(`matchup.so_far.games_left: ${t} must be a whole number of games from 0 to 7`);
+    } else if (!(sf.remaining_share >= 0 && sf.remaining_share <= 1))
+      throw new Error("matchup.so_far needs games_left, or remaining_share between 0 and 1");
+    for (const side of [sf.you, sf.opponent])
+      for (const k of need)
+        if (!(typeof side?.[k] === "number" && side[k] >= 0))
+          throw new Error(`matchup.so_far: ${k} must be a number of 0 or more for both sides (this league's categories need it)`);
+  }
+  const weekStart = m.week_start ?? thisMonday;
+  const week = snapshot.schedule?.weeks.find((x) => x.start === weekStart) ?? (weekStart === thisMonday ? wk0 : undefined);
+  const gamesFor = (team) => week && team ? week.games[team] ?? 0 : DEFAULT_WEEK_GAMES;
+  const tbd = week?.tbd_slots ?? 0;
+  if (tbd > 0)
+    assumptions.push(`WARNING: ${tbd} game slot(s) in the week of ${weekStart} are still "TBD" in the NBA schedule, so some teams' game counts may be too low. Treat these numbers as rougher.`);
+  assumptions.push(week ? `Games per player come from the NBA schedule for the week of ${weekStart}. Injuries and rest days are not modelled.` : `No schedule for the week of ${weekStart} in the data, so every player gets an average week of ${DEFAULT_WEEK_GAMES} games.`);
+  const leftFor = (team) => sf?.games_left && team ? sf.games_left[team] ?? 0 : 0;
+  const sideOf = (list, label) => {
+    const names2 = [];
+    const rows = [];
+    const players = [], lefts = [];
+    for (const r2 of list) {
+      const hit = resolvePlayer(r2.name, snapshot.players);
+      if (hit.status === "matched") {
+        names2.push({ input: r2.name, status: "matched", matched: hit.player.name });
+        const e = estimated.get(hit.player.id);
+        if (e)
+          rows.push({ name: hit.player.name, team: e.team ?? null, games: gamesFor(e.team), ...sf?.games_left ? { games_left: leftFor(e.team) } : {}, counted: false, ...r2.status === "IL" ? { status: "IL" } : {}, value: e.value });
+        if (r2.status !== "IL" && e) {
+          players.push({ base: e.base, games: gamesFor(e.team), value: e.value });
+          lefts.push(leftFor(e.team));
+        }
+      } else if (hit.status === "ambiguous")
+        names2.push({ input: r2.name, status: "ambiguous", candidates: hit.candidates.map((c) => ({ id: c.id, name: c.name, latest_season: c.seasons[0]?.season ?? "" })) });
+      else
+        names2.push({ input: r2.name, status: "not_found" });
+    }
+    const missing = names2.filter((n) => n.status !== "matched").length;
+    if (missing > 0)
+      assumptions.push(`${missing} player(s) in the ${label} roster could not be matched and are left out of the weekly totals.`);
+    const totals = anyTotals(players, slots);
+    const counted = new Set(rows.filter((x) => x.status !== "IL").sort((a, b) => b.value - a.value).slice(0, slots));
+    const outRows = rows.map(({ value: _v, ...x }, i) => ({ ...x, counted: counted.has(rows[i]) })).sort((a, b) => Number(b.counted) - Number(a.counted) || b.games - a.games);
+    let remaining = totals, share = 1;
+    if (sf) {
+      if (!sf.games_left) {
+        remaining = scaledAny(totals, sf.remaining_share);
+        share = sf.remaining_share;
+      } else {
+        remaining = anyTotals(players.map((p, i) => ({ ...p, games: lefts[i] })), slots);
+        const lineup = players.map((p, i) => ({ p, i })).sort((a, b) => b.p.value - a.p.value).slice(0, slots);
+        const full = lineup.reduce((t, x) => t + x.p.games, 0), rest = lineup.reduce((t, x) => t + lefts[x.i], 0);
+        share = full > 0 ? Math.min(1, rest / full) : 1;
+      }
+    }
+    return { totals, remaining, share, names: names2, rows: outRows };
+  };
+  const me = sideOf(input.roster, "your");
+  let opponents;
+  let names = me.names;
+  let opp;
+  if (m.opponent && m.opponent.length > 0) {
+    const o = opp = sideOf(m.opponent, "opponent");
+    opponents = [o.totals];
+    names = [...me.names, ...o.names.map((n) => ({ ...n, input: `${n.input} (opponent)` }))];
+  } else {
+    opponents = typicalAnyOpponents(pool, { teams, rosterSpots: roster_spots }, slots, gamesFor, { leagues: 300, seed: input.seed ?? 1 });
+    assumptions.push(`Typical opponents: ${opponents.length} teams from 300 simulated ${teams}-team drafts on this league's categories, each playing its best ${slots} players. Positions are ignored.`);
+  }
+  const weeks = m.weeks ?? DEFAULT_WEEKS;
+  const bank = (b) => ({ ...ZERO_BASE(), ...Object.fromEntries(Object.entries(b).filter(([, v]) => typeof v === "number")) });
+  const progress = sf && opp ? { me: { banked: bank(sf.you), remaining: me.remaining, share: me.share }, opponent: { banked: bank(sf.opponent), remaining: opp.remaining, share: opp.share } } : undefined;
+  const r = simulateAny(me.totals, opponents, codes, { weeks, seed: input.seed ?? 1, slots, ...progress ? { progress } : {} });
+  if (sf)
+    assumptions.push(sf.games_left ? `The week is under way: stats already banked are kept, and the games still to play (your lineup has ${Math.round(me.share * 100)}% of its week left, theirs ${Math.round(opp.share * 100)}%) are simulated from each player's own team games left. Games in progress or already counted by the league site must not be in the games left.` : `The week is under way: stats already banked are kept, and the remaining ${Math.round(sf.remaining_share * 100)}% of each team's games are simulated. Every player is assumed to have that same share of his week left, which is rough when a team's games are lopsided.`);
+  assumptions.push(`Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed. The simulation does not model injuries, lineup moves or streaming during the week. A week is won with more categories than the opponent; equal counts are a tie.`);
+  const pct = (x) => Math.round(x * 100);
+  return {
+    week_start: week ? weekStart : null,
+    games_source: week ? "schedule" : "assumed",
+    schedule_incomplete: tbd > 0,
+    opponent: m.opponent && m.opponent.length > 0 ? "roster" : "typical",
+    lineup_slots: slots,
+    weeks,
+    so_far_counted: Boolean(sf),
+    categories_used: codes,
+    categories: Object.fromEntries(codes.map((c) => [c, pct(r.categories[c])])),
+    week_win_pct: pct(r.weekWin),
+    week_tie_pct: pct(r.weekTie),
+    week_loss_pct: pct(r.weekLoss),
+    distribution_pct: r.distribution.map(pct),
+    rosters: { you: me.rows, ...opp ? { opponent: opp.rows } : {} },
+    names,
+    assumptions
+  };
+}
+
+// src/fantasyValue.ts
+var ENGINE_VERSION = "0.3.0";
+function safeDivide(num, den) {
+  return Number.isFinite(den) && den !== 0 && Number.isFinite(num) ? num / den : 0;
+}
+function categoryZ(a, b) {
+  const { means: m, stds: s } = b;
+  return {
+    PTS: safeDivide(a.pts - m.m_pts, s.s_pts),
+    REB: safeDivide(a.reb - m.m_reb, s.s_reb),
+    AST: safeDivide(a.ast - m.m_ast, s.s_ast),
+    STL: safeDivide(a.stl - m.m_stl, s.s_stl),
+    BLK: safeDivide(a.blk - m.m_blk, s.s_blk),
+    "3PM": safeDivide(a.fg3m - m.m_fg3m, s.s_fg3m),
+    "FG%": safeDivide((a.fg_pct - m.m_fg_pct) * a.fga, s.s_fg_imp),
+    "FT%": safeDivide((a.ft_pct - m.m_ft_pct) * a.fta, s.s_ft_imp),
+    TO: -safeDivide(a.turnovers - m.m_tov, s.s_tov)
+  };
+}
+
+// src/assess.ts
+var DEFAULT_CUTOFFS = { elite: 85, strong: 60, neutral: 40 };
+function bandFor(percentile, cut = DEFAULT_CUTOFFS) {
+  if (percentile >= cut.elite)
+    return "elite";
+  if (percentile >= cut.strong)
+    return "strong";
+  if (percentile >= cut.neutral)
+    return "neutral";
+  return "weak";
+}
+function percentileOf(sortedAsc, x) {
+  let below = 0, equal = 0;
+  for (const v of sortedAsc) {
+    if (v < x)
+      below++;
+    else if (v === x)
+      equal++;
+    else
+      break;
+  }
+  return (below + 0.5 * equal) / sortedAsc.length * 100;
+}
+var at = (xs, p) => xs[Math.min(xs.length - 1, Math.floor(p / 100 * xs.length))];
+function assessTeam(roster, baseline, benchmark, opts) {
+  const cut = opts.cutoffs ?? DEFAULT_CUTOFFS;
+  const spots = benchmark.settings.rosterSpots;
+  const zero = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
+  const rows = roster.map((r) => {
+    const est = estimateAverages(r.history, opts.reference, { current: opts.current });
+    const z = est.averages ? categoryZ(est.averages, baseline) : null;
+    const status = r.status ?? "active";
+    const value = z ? CATEGORIES.reduce((s, c) => s + z[c], 0) : CATEGORIES.reduce((s, c) => s + benchmark.poolMean[c], 0);
+    return { r, est, z, status, value };
+  });
+  const actives = rows.filter((x) => x.status === "active").sort((a, b) => b.value - a.value);
+  const counted = new Set(actives.slice(0, spots));
+  const assumptions = [];
+  const players = rows.map((x) => {
+    let note = "";
+    if (x.status === "IL")
+      note = "On IL: not counted.";
+    else if (!counted.has(x))
+      note = "More players than roster spots: not counted.";
+    else if (x.est.confidence === "none")
+      note = "No NBA data (rookie or no recent games): counted as an average rostered player.";
+    else if (x.est.currentSeasonOnly)
+      note = `No completed NBA seasons: judged on this season only (${x.est.effectiveGames.toFixed(0)} games, ${x.est.seasonsUsed[0]}). Small sample, treat with care.`;
+    else if (x.est.confidence === "low")
+      note = `Small sample (${x.est.effectiveGames.toFixed(0)} effective games): treat with care.`;
+    else if (!x.est.seasonsUsed.includes(opts.reference))
+      note = `Estimated from ${x.est.seasonsUsed.join(", ")}; he did not play ${opts.reference}.`;
+    return {
+      name: x.r.name,
+      status: x.status,
+      counted: x.status === "active" && counted.has(x),
+      confidence: x.est.confidence,
+      effectiveGames: x.est.effectiveGames,
+      seasonsUsed: x.est.seasonsUsed,
+      z: x.z,
+      note
+    };
+  });
+  const sums = { ...zero };
+  for (const x of actives.slice(0, spots))
+    for (const c of CATEGORIES)
+      sums[c] += x.z ? x.z[c] : benchmark.poolMean[c];
+  const empty = spots - Math.min(spots, actives.length);
+  for (let i = 0;i < empty; i++)
+    for (const c of CATEGORIES)
+      sums[c] += benchmark.poolMean[c];
+  if (empty > 0)
+    assumptions.push(`${empty} empty roster slot(s) counted as an average rostered player.`);
+  const currentOnly = players.filter((p) => p.counted && rows.find((x) => x.r.name === p.name)?.est.currentSeasonOnly).length;
+  if (currentOnly > 0)
+    assumptions.push(`${currentOnly} player(s) with no completed NBA seasons are judged on this season only; small samples can swing.`);
+  const noData = players.filter((p) => p.counted && p.confidence === "none").length;
+  if (noData > 0)
+    assumptions.push(`${noData} player(s) with no NBA data counted as an average rostered player.`);
+  assumptions.push(`Players are estimated from their last three seasons, weighted by recency (${RECENCY_WEIGHTS.join(" / ")}) and games played (capped at ${GAMES_CAP} per season). Aging and role changes are not modelled.`, `Benchmark: ${benchmark.settings.teams} teams x ${spots} roster spots, ${benchmark.leagues} simulated snake drafts, each pick one of the best ${benchmark.pickWeights.length} remaining. Positions are ignored.`, "Every counted player's production is summed; daily lineup limits are not modelled.", `Bands by percentile among simulated teams: elite >= ${cut.elite}, strong >= ${cut.strong}, neutral >= ${cut.neutral}, otherwise weak.`);
+  const categories = {};
+  for (const c of CATEGORIES) {
+    const b = benchmark.teamSums[c];
+    const percentile = percentileOf(b, sums[c]);
+    categories[c] = { total: sums[c], percentile, band: bandFor(percentile, cut), benchmark: { p15: at(b, 15), median: at(b, 50), p85: at(b, 85) } };
+  }
+  return { categories, players, assumptions, engine_version: ENGINE_VERSION };
+}
+
 // src/moves.ts
 function scoreRoster(roster, env, simWeeks = env.simWeeks) {
   const pad = Math.max(0, env.slots - roster.length);
   const list = pad > 0 ? [...roster, ...Array(pad).fill(env.replacement)] : roster;
   let week = 0;
-  const cats = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
+  const codes = env.engine?.codes ?? [...CATEGORIES];
+  const cats = Object.fromEntries(codes.map((c) => [c, 0]));
   for (const w of env.weeks) {
-    const totals = weeklyTotals(list.map((p) => ({ averages: p.averages, games: w.gamesFor(p.team), value: p.value })), env.slots);
-    const r = simulateWeeks(totals, w.opponents, { weeks: simWeeks, seed: env.seed, slots: env.slots });
+    const r = env.engine ? env.engine.simulate(env.engine.totals(list, w.gamesFor, env.slots), w.opponents, { weeks: simWeeks, seed: env.seed, slots: env.slots }) : simulateWeeks(weeklyTotals(list.map((p) => ({ averages: p.averages, games: w.gamesFor(p.team), value: p.value })), env.slots), w.opponents, { weeks: simWeeks, seed: env.seed, slots: env.slots });
     week += r.weekWin;
-    for (const c of CATEGORIES)
+    for (const c of codes)
       cats[c] += r.categories[c];
   }
   const n = env.weeks.length;
-  for (const c of CATEGORIES)
+  for (const c of codes)
     cats[c] /= n;
   return { weekWin: week / n, categories: cats };
 }
-var diff = (a, b) => Object.fromEntries(CATEGORIES.map((c) => [c, a.categories[c] - b.categories[c]]));
+var diff = (a, b) => Object.fromEntries(Object.keys(a.categories).map((c) => [c, a.categories[c] - b.categories[c]]));
 function entersLineup(roster, entry, env) {
   const pad = Math.max(0, env.slots - roster.length);
   const list = pad > 0 ? [...roster, ...Array(pad).fill(env.replacement)] : roster;
@@ -612,6 +1229,15 @@ function check(input) {
     throw new Error("roster must list at least one player");
   if (input.roster.length > 40)
     throw new Error("roster has more than 40 players");
+}
+function analyzeLeague(input, snapshot) {
+  check(input);
+  if (input.league.categories) {
+    const codes = parseCategories(input.league.categories);
+    if (!isStandardNine(codes))
+      return analyzeAny(input, snapshot, codes);
+  }
+  return analyze(input, snapshot);
 }
 function analyze(input, snapshot) {
   check(input);
@@ -872,7 +1498,10 @@ function runWaiver(input, snapshot, reference, currentSeason, baseline) {
     throw new Error("waiver.candidates must list at least one available player");
   if (w.candidates.length > 60)
     throw new Error("waiver.candidates has more than 60 players; send the best available");
-  const st = moveSetup(input, w, snapshot, reference, currentSeason, baseline);
+  return waiverWith(input, snapshot, moveSetup(input, w, snapshot, reference, currentSeason, baseline));
+}
+function waiverWith(input, snapshot, st) {
+  const w = input.waiver;
   const names = [];
   const roster = resolveList(input.roster, snapshot, st.estimated, names);
   const mine = new Set(roster.map((p) => p.id));
@@ -902,8 +1531,10 @@ function runWaiver(input, snapshot, reference, currentSeason, baseline) {
   };
 }
 function runTrade(input, snapshot, reference, currentSeason, baseline) {
+  return tradeWith(input, snapshot, moveSetup(input, input.trade, snapshot, reference, currentSeason, baseline));
+}
+function tradeWith(input, snapshot, st) {
   const t = input.trade;
-  const st = moveSetup(input, t, snapshot, reference, currentSeason, baseline);
   const names = [];
   const mine = resolveList(input.roster, snapshot, st.estimated, names);
   const theirs = t.other_roster ? resolveList(t.other_roster, snapshot, st.estimated, names, " (other team)") : [];
@@ -970,7 +1601,7 @@ try {
     const snapshot = await loadSnapshot(snapPath);
     const inputPath = arg("--input");
     const input = JSON.parse(readFileSync(inputPath ?? 0, "utf8"));
-    console.log(JSON.stringify(analyze(input, snapshot), null, 2));
+    console.log(JSON.stringify(analyzeLeague(input, snapshot), null, 2));
   }
 } catch (e) {
   console.error(JSON.stringify({ error: e instanceof Error ? e.message : String(e), usage: USAGE }));
