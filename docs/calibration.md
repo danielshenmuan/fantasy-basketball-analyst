@@ -118,7 +118,7 @@ Points with games played (slope 0.95): a quoted 90-100% won 95.7% and 80-90% won
 ## What this means
 
 - Do not present the quoted percentages in the high or low tails as measured frequencies. Roughly, in this sample, quoted 90% means about 80%, 80% about 70%, 70% about 60%; this holds for all three scoring systems.
-- The cause is games played, not luck. Part of the gap is hindsight-free: a rostered player misses some games in a typical week, while the engine credits him with every team game.
+- The cause is games played, not luck. The likely reason: a rostered player misses some games in a typical week, while the engine credits him with every team game.
 - Not done here (would change the method, so needs approval): shrinking the tails toward 50% by about a third, a per-player games-played (availability) factor, and larger FG% / FT% luck. A re-run of this script after any such change gives the new calibration in under ten minutes.
 
 ## Limits
