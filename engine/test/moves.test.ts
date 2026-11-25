@@ -129,7 +129,7 @@ describe("trades", () => {
 });
 
 describe("explainUnranked (issue #21): a model limit, not a verdict on the player", () => {
-  const deep = [...lineup(10, {}, "d"), ...lineup(3, { pts: 6, reb: 2 }, "b")];
+  const deep = [...lineup(10, {}, "d"), ...lineup(3, { pts: 6, reb: 2 }, "b").map((p, i) => ({ ...p, value: -1 - i }))];
   test("bench-only says where he would rank and states the model limit", () => {
     const x = explainUnranked({ add: entry("benchX", {}, -6), reason: "bench-only" }, deep, 10);
     expect(x.label).toBe("not counted by this model");

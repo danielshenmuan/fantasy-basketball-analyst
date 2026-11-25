@@ -508,7 +508,7 @@ const ord = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th",
 const MODEL_LIMIT = "This model counts a bench player as sitting all week; it does not model days when starters are off, so any value he would give on those days is not counted.";
 
 /** Plain-words description of a candidate the ranking did not score. Wording and output fields only: the ranking is unchanged. */
-function explainUnranked(u: { add: { name: string; value: number }; reason: NotRanked["reason"]; drop?: { name: string; value: number } }, roster: { id?: number; name: string; value: number }[], slots: number): NotRanked {
+export function explainUnranked(u: { add: { name: string; value: number }; reason: NotRanked["reason"]; drop?: { name: string; value: number } }, roster: { id?: number; name: string; value: number }[], slots: number): NotRanked {
   const base = { add: u.add.name, reason: u.reason, label: "not counted by this model" as const, lineup_slots: slots };
   if (u.reason === "below-top") {
     return { ...base, explanation: `${u.add.name} would help, but less than the moves listed; ask for a longer list to see him.` };
