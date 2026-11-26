@@ -423,6 +423,7 @@ var ZERO = () => ({
   td: 0
 });
 var BASE_KEYS = Object.keys(ZERO());
+var zeroBase = ZERO;
 var def = (code, label, num, extra = {}) => ({ code, label, num, ...extra });
 var REGISTRY = [
   def("MIN", "Minutes played", { minutes: 1 }),
@@ -519,6 +520,18 @@ function categoryValue(code, t) {
   const m = lin(d.den, t);
   return m > 0 ? n / m : 0;
 }
+function categoryParts(code, t) {
+  const d = defOf(code);
+  return d.den ? { num: lin(d.num, t), den: lin(d.den, t) } : { num: lin(d.num, t) };
+}
+function ratioKeys(code) {
+  const d = defOf(code);
+  if (!d.den)
+    return null;
+  const n = Object.keys(d.num), m = Object.keys(d.den);
+  return n.length === 1 && m.length === 1 ? { num: n[0], den: m[0] } : null;
+}
+var categoryCode = (name) => ALIASES[norm2(name)];
 function neededStats(codes) {
   const s = new Set;
   for (const c of codes) {
@@ -1782,6 +1795,523 @@ function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thi
   };
 }
 
+// src/rotoluck.ts
+var ROTO_GAMES_K = 25;
+var ROTO_LEAGUE_RATE = [[0.05, -0.07], [0.22, 0.33], [0.36, 0.42], [0.52, 0.55], [0.68, 0.66], [0.83, 0.68]];
+var ROTO_GAMES_SD = { a: 1.942, b: 0.0053 };
+var ROTO_LUCK_AB = {
+  minutes: { a: 0.071, b: 0.022 },
+  fgm: { a: 0.126, b: 0.04 },
+  fga: { a: 0.103, b: 0.036 },
+  ftm: { a: 0.229, b: 0.071 },
+  fta: { a: 0.215, b: 0.067 },
+  fg3m: { a: 0.199, b: 0.073 },
+  fg3a: { a: 0.12, b: 0.057 },
+  oreb: { a: 0.261, b: 0.058 },
+  dreb: { a: 0.155, b: 0.04 },
+  ast: { a: 0.192, b: 0.05 },
+  stl: { a: 0.278, b: 0.058 },
+  blk: { a: 0.361, b: 0.083 },
+  turnovers: { a: 0.19, b: 0.055 },
+  pf: { a: 0.171, b: 0.029 }
+};
+var ROTO_LUCK_CORRELATION = [
+  [1, 0.568, 0.626, 0.314, 0.312, 0.379, 0.472, 0.225, 0.509, 0.428, 0.272, 0.208, 0.381, 0.269],
+  [0.568, 1, 0.85, 0.353, 0.357, 0.527, 0.495, 0.144, 0.352, 0.256, 0.154, 0.158, 0.28, 0.138],
+  [0.626, 0.85, 1, 0.428, 0.422, 0.487, 0.668, 0.153, 0.368, 0.299, 0.138, 0.198, 0.345, 0.109],
+  [0.314, 0.353, 0.428, 1, 0.962, 0.099, 0.206, 0.19, 0.201, 0.154, 0.061, 0.091, 0.196, 0.053],
+  [0.312, 0.357, 0.422, 0.962, 1, 0.085, 0.187, 0.206, 0.216, 0.164, 0.054, 0.088, 0.201, 0.043],
+  [0.379, 0.527, 0.487, 0.099, 0.085, 1, 0.813, -0.048, 0.156, 0.169, 0.1, 0.087, 0.116, 0.086],
+  [0.472, 0.495, 0.668, 0.206, 0.187, 0.813, 1, -0.025, 0.201, 0.208, 0.103, 0.147, 0.194, 0.071],
+  [0.225, 0.144, 0.153, 0.19, 0.206, -0.048, -0.025, 1, 0.164, 0.068, 0.051, 0.064, 0.069, 0.131],
+  [0.509, 0.352, 0.368, 0.201, 0.216, 0.156, 0.201, 0.164, 1, 0.333, 0.146, 0.19, 0.257, 0.11],
+  [0.428, 0.256, 0.299, 0.154, 0.164, 0.169, 0.208, 0.068, 0.333, 1, 0.17, 0.114, 0.314, -0.016],
+  [0.272, 0.154, 0.138, 0.061, 0.054, 0.1, 0.103, 0.051, 0.146, 0.17, 1, 0.057, 0.152, 0.083],
+  [0.208, 0.158, 0.198, 0.091, 0.088, 0.087, 0.147, 0.064, 0.19, 0.114, 0.057, 1, 0.101, 0.097],
+  [0.381, 0.28, 0.345, 0.196, 0.201, 0.116, 0.194, 0.069, 0.257, 0.314, 0.152, 0.101, 1, 0.127],
+  [0.269, 0.138, 0.109, 0.053, 0.043, 0.086, 0.071, 0.131, 0.11, -0.016, 0.083, 0.097, 0.127, 1]
+];
+
+// src/roto.ts
+function rankPoints(values, lower) {
+  const better = (a, b) => lower ? a < b : a > b;
+  const eps = 0.000000001;
+  return values.map((v) => {
+    let worse = 0, equal = 0;
+    for (const w of values) {
+      if (Math.abs(w - v) <= eps * Math.max(1, Math.abs(v)))
+        equal++;
+      else if (better(v, w))
+        worse++;
+    }
+    return worse + (equal + 1) / 2;
+  });
+}
+function rotoPoints(values, lower) {
+  const byCategory = values.map((v, c) => rankPoints(v, lower[c]));
+  const teams = values[0]?.length ?? 0;
+  const total = Array.from({ length: teams }, (_, t) => byCategory.reduce((s, row) => s + row[t], 0));
+  return { total, byCategory };
+}
+var interp = (table, x) => {
+  if (x <= table[0][0])
+    return table[0][1];
+  for (let i = 1;i < table.length; i++) {
+    const [x1, y1] = table[i], [x0, y0] = table[i - 1];
+    if (x <= x1)
+      return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+  }
+  return table[table.length - 1][1];
+};
+var ROTO_CURRENT_K = 30;
+var MIN_LEAGUE_RATE = 0.3;
+function expectedShare(gamesPlayed, teamGamesSoFar, teamGamesLeft) {
+  const total = teamGamesSoFar + teamGamesLeft;
+  const frac = total > 0 ? teamGamesLeft / total : 1;
+  const rate = Math.max(MIN_LEAGUE_RATE, interp(ROTO_LEAGUE_RATE, frac));
+  const s = (gamesPlayed + ROTO_GAMES_K * rate) / (Math.max(0, teamGamesSoFar) + ROTO_GAMES_K);
+  return Math.min(1, Math.max(0, s));
+}
+var gamesSd = (teamGamesLeft) => teamGamesLeft > 0 ? Math.sqrt(ROTO_GAMES_SD.a * teamGamesLeft + ROTO_GAMES_SD.b * teamGamesLeft ** 2) : 0;
+var hashInts = (...xs) => {
+  let h = 2654435769;
+  for (const x of xs) {
+    h = Math.imul(h ^ (x | 0), 2246822507);
+    h ^= h >>> 13;
+    h = Math.imul(h, 3266489909);
+    h ^= h >>> 16;
+  }
+  return h >>> 0;
+};
+var gaussian2 = (rand) => {
+  let u = 0;
+  while (u === 0)
+    u = rand();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand());
+};
+var idKey = (id) => Math.floor(id * 1000003);
+function cholesky2(m) {
+  const n = m.length;
+  const L = Array.from({ length: n }, () => Array(n).fill(0));
+  for (let i = 0;i < n; i++)
+    for (let j = 0;j <= i; j++) {
+      let s = m[i][j];
+      for (let k = 0;k < j; k++)
+        s -= L[i][k] * L[j][k];
+      if (i === j) {
+        if (s <= 0)
+          throw new Error("ROTO_LUCK_CORRELATION is not positive definite");
+        L[i][j] = Math.sqrt(s);
+      } else
+        L[i][j] = s / L[j][j];
+    }
+  return L;
+}
+var CHOL = cholesky2(ROTO_LUCK_CORRELATION);
+var BASE_KEYS2 = Object.keys(zeroBase());
+function prepareRoto(teams, codes, opts = {}) {
+  if (teams.length < 2)
+    throw new Error("a roto league needs at least 2 teams");
+  const luck = opts.luck ?? true;
+  const sims = luck ? opts.sims ?? 3000 : 1;
+  const seed = opts.seed ?? 1;
+  const lower = codes.map((c) => isLowerCategory(c));
+  const C = codes.length;
+  function row(team, s, ti) {
+    const rest = zeroBase();
+    let played = 0, n = 0;
+    for (const p of team.players) {
+      const G = p.teamGamesLeft, E = G * p.expShare;
+      const games = luck && G > 0 ? Math.min(G, Math.max(0, E + gamesSd(G) * gaussian2(mulberry32(hashInts(seed, s, 7, idKey(p.id)))))) : E;
+      for (const k of BASE_KEYS2)
+        rest[k] += p.base[k] * games;
+      if (G > 0) {
+        played += games;
+        n++;
+      }
+    }
+    if (luck && n > 0) {
+      const rng = mulberry32(hashInts(seed, s, 11, ti));
+      const z = LUCK_STATS.map(() => gaussian2(rng));
+      const perGame = Math.max(1, played / n);
+      const scale = Math.sqrt(LUCK_REFERENCE_SLOTS / n);
+      LUCK_STATS.forEach((k, i) => {
+        const c = CHOL[i].reduce((sum, v, j) => sum + v * z[j], 0);
+        const ab = ROTO_LUCK_AB[k];
+        rest[k] = Math.max(0, rest[k] * (1 + Math.sqrt(ab.a * ab.a / perGame + ab.b * ab.b) * scale * c));
+      });
+      rest.dd = Math.max(0, rest.dd + Math.sqrt(rest.dd) * gaussian2(rng));
+      rest.td = Math.max(0, rest.td + Math.sqrt(rest.td) * gaussian2(rng));
+    }
+    return codes.map((code) => {
+      const b = team.banked[code] ?? { num: 0 };
+      const part = categoryParts(code, rest);
+      if (part.den === undefined)
+        return b.num + part.num;
+      const den = (b.den ?? 0) + part.den;
+      return den > 0 ? (b.num + part.num) / den : 0;
+    });
+  }
+  const cache = teams.map((t, ti) => Array.from({ length: sims }, (_, s) => row(t, s, ti)));
+  const T = teams.length;
+  return {
+    codes,
+    evaluate(overrides) {
+      const rows = teams.map((_, ti) => overrides?.has(ti) ? Array.from({ length: sims }, (_2, s) => row(overrides.get(ti), s, ti)) : cache[ti]);
+      const points = Array(T).fill(0), place = Array.from({ length: T }, () => Array(T).fill(0));
+      const catPts = Array.from({ length: T }, () => Array(C).fill(0)), finals = Array.from({ length: T }, () => Array(C).fill(0));
+      for (let s = 0;s < sims; s++) {
+        const total = Array(T).fill(0);
+        for (let c = 0;c < C; c++) {
+          const vals = rows.map((r) => r[s][c]);
+          const rp = rankPoints(vals, lower[c]);
+          for (let t = 0;t < T; t++) {
+            total[t] += rp[t];
+            catPts[t][c] += rp[t];
+            finals[t][c] += vals[t];
+          }
+        }
+        for (let t = 0;t < T; t++) {
+          points[t] += total[t];
+          let above = 0, equal = 0;
+          for (let u = 0;u < T; u++) {
+            if (Math.abs(total[u] - total[t]) < 0.000000001)
+              equal++;
+            else if (total[u] > total[t])
+              above++;
+          }
+          for (let p = above;p < above + equal; p++)
+            place[t][p] += 1 / equal;
+        }
+      }
+      return {
+        sims,
+        codes,
+        teams: teams.map((t, ti) => {
+          const name = (overrides?.get(ti) ?? t).name;
+          const pl = place[ti].map((x) => x / sims);
+          return {
+            name,
+            expectedPoints: points[ti] / sims,
+            expectedPlace: pl.reduce((s, x, p) => s + x * (p + 1), 0),
+            place: pl,
+            categoryPoints: catPts[ti].map((x) => x / sims),
+            finalValues: finals[ti].map((x) => x / sims)
+          };
+        })
+      };
+    }
+  };
+}
+
+// src/analyzeRoto.ts
+var band2 = (frac) => frac >= 0.85 ? "elite" : frac >= 0.6 ? "strong" : frac >= 0.4 ? "neutral" : "weak";
+var r1 = (x) => Math.round(x * 10) / 10;
+var r2 = (x) => Math.round(x * 100) / 100;
+var COMPONENT = {
+  minutes: "MIN",
+  fgm: "FGM",
+  fga: "FGA",
+  ftm: "FTM",
+  fta: "FTA",
+  fg3m: "3PM",
+  fg3a: "3PA",
+  oreb: "OREB",
+  dreb: "DREB",
+  ast: "AST",
+  stl: "STL",
+  blk: "BLK",
+  turnovers: "TO",
+  pf: "PF",
+  dd: "DD",
+  td: "TD"
+};
+var NUMERIC_FIELDS = ["pts", "reb", "ast", "stl", "blk", "fg3m", "fg_pct", "ft_pct", "turnovers", "fga", "fta", "fgm", "ftm", "oreb", "dreb", "pf", "fg3a", "dd_rate", "td_rate", "min"];
+function roto_projectAverages(p, reference, current) {
+  const e = estimateAverages(historyOf(p), reference, { current });
+  const cur = p.seasons.find((s) => s.season === current);
+  if (!e.averages)
+    return null;
+  if (e.currentSeasonOnly || !cur || !(cur.gp > 0))
+    return { averages: e.averages, confidence: e.confidence, effectiveGames: e.effectiveGames };
+  const w = cur.gp / (cur.gp + ROTO_CURRENT_K);
+  const mine = { ...cur.averages, min: cur.mpg }, prior = e.averages;
+  const out = { ...prior };
+  for (const f of NUMERIC_FIELDS) {
+    const a = prior[f], b = mine[f];
+    if (typeof a === "number" && typeof b === "number")
+      out[f] = (1 - w) * a + w * b;
+    else if (typeof b === "number" && a === undefined)
+      out[f] = b;
+  }
+  return { averages: out, confidence: e.confidence, effectiveGames: e.effectiveGames };
+}
+var lastDay = (snapshot) => {
+  const days = Object.keys(snapshot.schedule?.days ?? {}).sort();
+  return days.length ? days[days.length - 1] : null;
+};
+function gamesLeftWith(dates, av) {
+  if (!av)
+    return dates.length;
+  const back = av.returnDate;
+  let n = 0, played = 0;
+  for (const d of dates) {
+    if (d >= av.outFrom && (back === null || d < back))
+      continue;
+    const inRamp = !!(av.ramp && back && d >= back && played < av.ramp.games);
+    played++;
+    n += inRamp ? av.ramp.share : 1;
+  }
+  return n;
+}
+function analyzeRoto(input, snapshotIn) {
+  const lg = input.league;
+  if (lg.scoring)
+    throw new Error("roto leagues score categories: give league.categories (or none for the standard nine), not league.scoring");
+  if (input.matchup)
+    throw new Error("a roto league has no weekly matchup: ask for the team check, a waiver add or a trade");
+  if (input.outlook)
+    throw new Error("outlook is for head-to-head leagues; the roto team check already gives the finish chances for the rest of the season");
+  const codes = lg.categories ? parseCategories(lg.categories) : [...STANDARD_NINE];
+  const standings = lg.standings;
+  if (!Array.isArray(standings) || standings.length < 4)
+    throw new Error("a roto league needs league.standings: every team's name and season totals (at least 4 teams)");
+  const meIdx = standings.findIndex((s) => s.me);
+  if (meIdx < 0 || standings.filter((s) => s.me).length !== 1)
+    throw new Error("mark your own team in league.standings with me: true (exactly one)");
+  if (new Set(standings.map((s) => s.team)).size !== standings.length)
+    throw new Error("league.standings: team names must be different");
+  for (const [i, s] of standings.entries())
+    if (i !== meIdx && (!Array.isArray(s.roster) || s.roster.length === 0))
+      throw new Error(`league.standings: ${s.team} needs its roster (every team's roster is read to project the rest of the season)`);
+  const snapshot = withScheduleDays(input, snapshotIn);
+  const asOf = asOfOf(input, snapshot);
+  const reference = input.reference ?? snapshot.reference_season;
+  const current = seasonLabel(startYear(reference) + 1);
+  const opt = input.roto ?? {};
+  const top = Math.max(1, Math.min(standings.length, Math.floor(opt.top ?? 3)));
+  const sims = Math.max(200, Math.floor(opt.sims ?? 3000));
+  const moveSims = Math.max(200, Math.min(sims, 1500));
+  const seed = input.seed ?? 1;
+  const seasonEnd = opt.season_end ?? lastDay(snapshot);
+  let gamesSource = "schedule";
+  const hasDays = !!snapshot.schedule?.days && seasonEnd !== null;
+  if (!hasDays && !opt.games_left)
+    throw new Error("roto needs the games left: the data file's day-by-day NBA schedule (schedule.days) or roto.games_left per team");
+  if (!hasDays)
+    gamesSource = "given";
+  const teamDates = (team) => {
+    if (!team)
+      return null;
+    if (hasDays)
+      return gameDays(snapshot, team, asOf, seasonEnd) ?? [];
+    return opt.games_left[team] ?? null;
+  };
+  const teamLeft = (team) => {
+    const d = teamDates(team);
+    return d === null ? 0 : typeof d === "number" ? d : d.length;
+  };
+  const teamsWithGames = [...new Set(snapshot.players.map((p) => p.team).filter((t) => !!t))];
+  const avgLeft = teamsWithGames.length ? teamsWithGames.reduce((s, t) => s + teamLeft(t), 0) / teamsWithGames.length : 0;
+  const played = new Map;
+  for (const p of snapshot.players) {
+    const c = p.seasons.find((s) => s.season === current);
+    if (p.team && c)
+      played.set(p.team, Math.max(played.get(p.team) ?? 0, c.gp));
+  }
+  const gpOf = new Map;
+  for (const p of snapshot.players)
+    gpOf.set(p.id, p.seasons.find((s) => s.season === current)?.gp ?? 0);
+  const estimated = new Map;
+  for (const p of snapshot.players) {
+    const e = roto_projectAverages(p, reference, current);
+    if (!e)
+      continue;
+    estimated.set(p.id, { id: p.id, name: p.name, averages: e.averages, team: p.team, value: 0, confidence: e.confidence, effectiveGames: e.effectiveGames, base: baseOf(e.averages, []) });
+  }
+  const names = [];
+  const notes = [];
+  const noTeam = new Set;
+  const toPlayer = (e) => {
+    const dates = teamDates(e.team);
+    let left, teamLeftN;
+    if (dates === null) {
+      left = teamLeftN = Math.round(avgLeft);
+      if (!e.team)
+        noTeam.add(e.name);
+    } else if (typeof dates === "number") {
+      left = teamLeftN = dates;
+      if (e.avail)
+        notes.push(`${e.name}: no day-by-day schedule, so his injury window is not applied`);
+    } else {
+      left = gamesLeftWith(dates, e.avail);
+      teamLeftN = dates.length;
+    }
+    const n0 = e.team && played.get(e.team) || input.team_games || 0;
+    const share = expectedShare(gpOf.get(e.id) ?? 0, n0, teamLeftN);
+    return { id: e.id, base: e.base, teamGamesLeft: left, expShare: share };
+  };
+  const ctx = { asOf, ramp: input.ramp, notes };
+  const rosterOf = (list, suffix = "") => resolveList(list, snapshot, estimated, names, suffix, ctx);
+  const entries = standings.map((s, i) => rosterOf(i === meIdx ? input.roster : s.roster, i === meIdx ? "" : ` (${s.team})`));
+  let estimatedShooting = false;
+  const bankedOf = (ti) => {
+    const s = standings[ti];
+    const totals = new Map;
+    for (const [k, v] of Object.entries(s.totals ?? {})) {
+      const c = categoryCode(k);
+      if (!c)
+        continue;
+      if (!Number.isFinite(v))
+        throw new Error(`league.standings: ${s.team}: ${k} must be a number`);
+      totals.set(c, v);
+    }
+    const out2 = {};
+    for (const c of codes) {
+      const rk = ratioKeys(c);
+      if (!rk) {
+        if (!totals.has(c))
+          throw new Error(`league.standings: ${s.team} has no ${c} total`);
+        out2[c] = { num: totals.get(c) };
+        continue;
+      }
+      const nC = COMPONENT[rk.num], dC = COMPONENT[rk.den];
+      if (totals.has(nC) && totals.has(dC)) {
+        out2[c] = { num: totals.get(nC), den: totals.get(dC) };
+        continue;
+      }
+      if (!totals.has(c))
+        throw new Error(`league.standings: ${s.team} needs ${nC} and ${dC} (or the ${c} value) for ${c}`);
+      const den = entries[ti].reduce((sum, e) => sum + e.base[rk.den] * (gpOf.get(e.id) ?? 0), 0);
+      const raw = totals.get(c);
+      const ratio = c.endsWith("%") ? asFraction(raw) : raw;
+      out2[c] = { num: ratio * den, den };
+      estimatedShooting = true;
+    }
+    return out2;
+  };
+  const teams = standings.map((s, ti) => ({ name: s.team, banked: bankedOf(ti), players: entries[ti].map(toPlayer) }));
+  const lowerFlags = codes.map((c) => isLowerCategory(c));
+  const N = teams.length;
+  const value = (t, c) => {
+    const b = t.banked[c];
+    return b.den !== undefined ? b.den > 0 ? b.num / b.den : 0 : b.num;
+  };
+  const current_ = rotoPoints(codes.map((c) => teams.map((t) => value(t, c))), lowerFlags);
+  const sim = prepareRoto(teams, codes, { sims, seed });
+  const base = sim.evaluate();
+  const finish = (r, ti) => ({
+    expected_points: r1(r.teams[ti].expectedPoints),
+    expected_place: r1(r.teams[ti].expectedPlace),
+    first_pct: r1(100 * r.teams[ti].place[0]),
+    top_pct: r1(100 * r.teams[ti].place.slice(0, top).reduce((s, x) => s + x, 0))
+  });
+  const me = base.teams[meIdx];
+  const categories = codes.map((c, ci) => ({
+    category: c,
+    current_total: r2(value(teams[meIdx], c)),
+    current_rank: N + 1 - current_.byCategory[ci][meIdx],
+    projected_total: r2(me.finalValues[ci]),
+    expected_rank: r1(N + 1 - me.categoryPoints[ci]),
+    expected_points: r1(me.categoryPoints[ci]),
+    band: band2((me.categoryPoints[ci] - 1) / (N - 1))
+  }));
+  const table = base.teams.map((t, ti) => ({ team: t.name, current_points: r1(current_.total[ti]), ...(() => {
+    const f = finish(base, ti);
+    return { expected_points: f.expected_points, expected_place: f.expected_place, first_pct: f.first_pct, top_pct: f.top_pct, finish_pct: t.place.map((x) => r1(100 * x)) };
+  })() })).sort((a, b) => b.expected_points - a.expected_points);
+  const assumptions = [
+    `Roto: every team is ranked in each of ${codes.join(", ")} on season totals; best of ${N} teams earns ${N} points, worst 1, tied teams split the points, most points wins. Finish chances come from ${sims} simulated rest-of-seasons with a fixed seed.`,
+    `Each team's final totals = the totals so far + each player's per-game averages x games he is expected to play. Averages are the prior seasons blended with this season so far (this season's weight = games / (games + ${ROTO_CURRENT_K})). Percentages and ratios are computed from made and attempted counts.`,
+    `Games left come from the NBA schedule (${gamesSource === "schedule" ? `${asOf} to ${seasonEnd}` : "the games_left you gave"}). Each player is expected to play a share of them: his games so far shrunk toward the league rate for this point of the season (an ASSUMPTION measured on 2025-26 and calibrated in the back-test, not a prediction about any one player). A known injury window or return date from the league page removes those games; a ramp-up after a return (default 80% output for 3 games) is also an assumption.`,
+    `Luck was measured on 2025-26: how many games each player really plays, and per-game variation of each base stat, with their correlations. It shrinks as fewer games remain, but a large part stays (injuries and role changes).`,
+    `Other teams hold the rosters you gave: no trades, adds or drops by them are modelled. Not modelled: a bench or daily lineup limits (every rostered player counts), games-played caps, positions, injured-list rules, and the playoffs.`,
+    estimatedShooting ? `SHOOTING ESTIMATED: the host gave only percentages for some teams, so banked attempts were estimated as each rostered player's per-game attempts x games played this season. This is rougher than the made and attempted counts; the back-test measures how rough.` : `Made and attempted counts were given, so percentage categories are exact up to now.`,
+    ...noTeam.size ? [`No NBA team in the data for ${[...noTeam].join(", ")}: an average number of games left is used for them.`] : [],
+    ...notes
+  ];
+  const out = {
+    roto: true,
+    categories_used: codes,
+    snapshot: { generated_at: snapshot.generated_at, reference_season: snapshot.reference_season },
+    league: { teams: N, roster_spots: lg.roster_spots, format: "roto" },
+    basis: { as_of: asOf, season_end: seasonEnd ?? "given", top, sims, shooting_counts: estimatedShooting ? "estimated" : "exact", games_source: gamesSource },
+    names,
+    warnings: [],
+    assumptions,
+    team_check: {
+      team: teams[meIdx].name,
+      current_points: r1(current_.total[meIdx]),
+      expected_points: r1(me.expectedPoints),
+      expected_place: r1(me.expectedPlace),
+      finish_pct: me.place.map((x) => r1(100 * x)),
+      first_pct: finish(base, meIdx).first_pct,
+      top_pct: finish(base, meIdx).top_pct,
+      categories,
+      table
+    }
+  };
+  const moveSim = input.waiver || input.trade ? prepareRoto(teams, codes, { sims: moveSims, seed }) : null;
+  const moveBase = moveSim?.evaluate();
+  const delta = (a, ti, b) => {
+    const x = finish(a, ti), y = finish(b, ti);
+    return { delta_expected_points: r2(x.expected_points - y.expected_points), delta_first_pct: r1(x.first_pct - y.first_pct), delta_top_pct: r1(x.top_pct - y.top_pct) };
+  };
+  const catDelta = (a, ti, b) => Object.fromEntries(codes.map((c, ci) => [c, r2(a.teams[ti].categoryPoints[ci] - b.teams[ti].categoryPoints[ci])]));
+  if (input.waiver && moveSim && moveBase) {
+    const w = input.waiver;
+    const mine = entries[meIdx], myPlayers = teams[meIdx].players;
+    const openSpot = mine.length < lg.roster_spots;
+    const moves = [];
+    const wNames = [];
+    for (const cand of w.candidates ?? []) {
+      const [ce] = resolveList([cand], snapshot, estimated, wNames, " (candidate)", ctx);
+      if (!ce)
+        continue;
+      const add = toPlayer(ce);
+      let best = null;
+      const options = [...openSpot ? [null] : [], ...mine.map((_, i) => i)];
+      for (const d of options) {
+        const roster = d === null ? [...myPlayers, add] : myPlayers.map((p, i) => i === d ? add : p);
+        const r = moveSim.evaluate(new Map([[meIdx, { ...teams[meIdx], players: roster }]]));
+        const dl = delta(r, meIdx, moveBase);
+        const mv = { add: ce.name, drop: d === null ? null : mine[d].name, expected_points: finish(r, meIdx).expected_points, ...dl, categories_delta: catDelta(r, meIdx, moveBase) };
+        if (!best || mv.delta_expected_points > best.delta_expected_points)
+          best = mv;
+      }
+      if (best)
+        moves.push(best);
+    }
+    names.push(...wNames);
+    moves.sort((a, b) => b.delta_expected_points - a.delta_expected_points);
+    out.waiver = { baseline: finish(moveBase, meIdx), moves: moves.slice(0, Math.max(1, w.top ?? 8)), none_improve: moves.every((m) => m.delta_expected_points <= 0) };
+  }
+  if (input.trade && moveSim && moveBase) {
+    const t = input.trade;
+    const partnerIdx = standings.findIndex((s) => s.team === t.partner);
+    if (!t.partner || partnerIdx < 0 || partnerIdx === meIdx)
+      throw new Error("trade.partner must be the name of another team in league.standings (its roster is changed by the trade too)");
+    if (!t.give?.length || !t.get?.length)
+      throw new Error("trade needs give and get (names)");
+    const tNames = [];
+    const give = resolveList(t.give, snapshot, estimated, tNames, " (give)", ctx), get = resolveList(t.get, snapshot, estimated, tNames, " (get)", ctx);
+    names.push(...tNames);
+    const wanted = (list, from, team) => list.filter((e) => !from.some((x) => x.id === e.id)).map((e) => `WARNING: ${e.name} is not on ${team}'s roster as given.`);
+    out.warnings.push(...wanted(give, entries[meIdx], teams[meIdx].name), ...wanted(get, entries[partnerIdx], teams[partnerIdx].name));
+    const gone = (rosterEntries, players, out_) => players.filter((_, i) => !out_.some((x) => x.id === rosterEntries[i].id));
+    const mineAfter = [...gone(entries[meIdx], teams[meIdx].players, give), ...get.map(toPlayer)];
+    const theirsAfter = [...gone(entries[partnerIdx], teams[partnerIdx].players, get), ...give.map(toPlayer)];
+    const r = moveSim.evaluate(new Map([[meIdx, { ...teams[meIdx], players: mineAfter }], [partnerIdx, { ...teams[partnerIdx], players: theirsAfter }]]));
+    out.trade = {
+      partner: teams[partnerIdx].name,
+      you: { before: finish(moveBase, meIdx), after: finish(r, meIdx), ...delta(r, meIdx, moveBase), categories_delta: catDelta(r, meIdx, moveBase) },
+      partner_side: { before: finish(moveBase, partnerIdx), after: finish(r, partnerIdx), ...delta(r, partnerIdx, moveBase) }
+    };
+  }
+  out.warnings = [...out.warnings, ...leftOutWarnings([names])];
+  return out;
+}
+
 // src/fantasyValue.ts
 var ENGINE_VERSION = "0.3.0";
 function safeDivide(num, den) {
@@ -2216,6 +2746,8 @@ function check(input) {
 }
 function analyzeLeague(input, snapshotIn) {
   check(input);
+  if (input.league.format === "roto")
+    return analyzeRoto(input, snapshotIn);
   const snapshot = withScheduleDays(input, snapshotIn);
   const out = dispatch(input, snapshot);
   if (input.outlook)
