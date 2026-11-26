@@ -118,6 +118,33 @@ describe("issue #27: a move that lowers the weekly win chance is never recommend
   });
 });
 
+describe("issue #28: breaks-slot only when every drop really empties a required slot", () => {
+  const withPos = (e: Entry, positions: string[]): Entry => ({ ...e, positions });
+  const slotEnv: MoveEnv = { ...env, slots: 3, slotList: ["G", "C", "UTIL"], checkSlots: true, openSpots: 0 };
+  const green = withPos(entry("green", { pts: 20, reb: 9 }, 20), ["PF", "C"]);
+  const a = withPos(entry("a", { pts: 18 }, 18), ["PG"]);
+  const b = withPos(entry("b", { pts: 16 }, 16), ["SG"]);
+  const c = withPos(entry("c", { pts: 12 }, 12), ["PG"]);
+  const hield = withPos(entry("hield", { pts: 6, reb: 2 }, 6), ["SG", "SF"]);
+  test("a non-C drop is tried: Hield who would not enter the lineup is bench-only, not breaks-slot", () => {
+    const { moves, unranked } = rankWaiverMoves([green, a, b, c], [hield], slotEnv);
+    expect(moves.length).toBe(0);
+    expect(unranked[0]!.reason).toBe("bench-only");
+  });
+  test("when every drop empties C it is still breaks-slot, naming C", () => {
+    const { unranked } = rankWaiverMoves([green, a, b, c], [hield], slotEnv, { droppable: [green] });
+    expect(unranked[0]!.reason).toBe("breaks-slot");
+    expect(unranked[0]!.empty_slots).toEqual(["C"]);
+  });
+  test("a second C-eligible player means dropping the first C is fine", () => {
+    const green2 = withPos(entry("green2", { pts: 14, reb: 7 }, 14), ["C"]);
+    const star = withPos(entry("star", { pts: 28, reb: 10, ast: 6 }, 28), ["PG", "SG"]);
+    const { unranked, moves } = rankWaiverMoves([green, green2, a, b], [star], slotEnv);
+    expect(unranked.some((u) => u.reason === "breaks-slot")).toBe(false);
+    expect(moves.length).toBe(1);
+  });
+});
+
 describe("trades", () => {
   const mine = [...lineup(8, {}, "m"), entry("bigman", { pts: 10, reb: 11, blk: 2, fg_pct: 0.55, fgm: 6.05, ast: 1, fg3m: 0 }, 1), entry("guard", { pts: 22, reb: 3, ast: 8, fg3m: 3 }, 6)];
   const theirs = [...lineup(8, {}, "t"), entry("star", { pts: 32, reb: 12, ast: 10, fg3m: 4, stl: 2, blk: 2 }, 24), entry("wing", { pts: 9, reb: 3, ast: 2 }, -2)];

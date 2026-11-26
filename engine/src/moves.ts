@@ -153,15 +153,17 @@ export function rankWaiverMoves(
   for (const add of candidates) {
     let pick: { add: Entry; drop: Entry | null; win: number } | null = null;
     let broke: string[] | null = null;
+    let slotSafe = false; // some drop leaves every required slot fillable (best lineup fit after the move)
     for (const drop of drops) {
       const next = without(drop).concat(add);
       const empty = slotsBroken(roster, next, env);
-      if (empty.length > 0) { broke = broke ?? empty; continue; }
+      if (empty.length > 0) { broke = [...new Set([...(broke ?? []), ...empty])]; continue; }
+      slotSafe = true;
       if (!entersLineup(next, add, env)) continue;
       const win = scoreRoster(next, env, quick).weekWin;
       if (!pick || win > pick.win || (win === pick.win && (drop?.value ?? -Infinity) < (pick.drop?.value ?? -Infinity))) pick = { add, drop, win };
     }
-    if (!pick) { unranked.push(broke ? { add, reason: "breaks-slot", empty_slots: broke } : { add, reason: "bench-only" }); continue; }
+    if (!pick) { unranked.push(broke && !slotSafe ? { add, reason: "breaks-slot", empty_slots: broke } : { add, reason: "bench-only" }); continue; }
     const addGain = pick.win - dropOnlyAt(pick.drop, quick, dropOnlyQuick);
     if (addGain <= 0) { unranked.push({ add, reason: "no-gain-from-add", drop: pick.drop }); continue; }
     picks.push({ ...pick, addGain });

@@ -1905,13 +1905,15 @@ function rankWaiverMoves(roster, candidates, env, opts = {}) {
   for (const add of candidates) {
     let pick = null;
     let broke = null;
+    let slotSafe = false;
     for (const drop of drops) {
       const next = without(drop).concat(add);
       const empty = slotsBroken(roster, next, env);
       if (empty.length > 0) {
-        broke = broke ?? empty;
+        broke = [...new Set([...broke ?? [], ...empty])];
         continue;
       }
+      slotSafe = true;
       if (!entersLineup(next, add, env))
         continue;
       const win = scoreRoster(next, env, quick).weekWin;
@@ -1919,7 +1921,7 @@ function rankWaiverMoves(roster, candidates, env, opts = {}) {
         pick = { add, drop, win };
     }
     if (!pick) {
-      unranked.push(broke ? { add, reason: "breaks-slot", empty_slots: broke } : { add, reason: "bench-only" });
+      unranked.push(broke && !slotSafe ? { add, reason: "breaks-slot", empty_slots: broke } : { add, reason: "bench-only" });
       continue;
     }
     const addGain = pick.win - dropOnlyAt(pick.drop, quick, dropOnlyQuick);
