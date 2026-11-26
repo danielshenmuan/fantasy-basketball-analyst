@@ -1346,6 +1346,44 @@ function estimateAverages(h, reference, opts = {}) {
   return { averages, confidence, effectiveGames: wSum, seasonsUsed: used };
 }
 
+// src/banked.ts
+var ATTEMPTS_ESTIMATE_NOTE = "Banked attempts are estimated (each counted player's per-game attempts x team games already played, from the game counts you gave), then turned into made shots with the percentage you gave. " + "Measured on 2025-26 weeks: this overstates banked field-goal attempts by about 16% (typical miss 15%) and free-throw attempts by about 28% (typical miss 24%), because rest days and short absences are not known; " + "the effect on the week's final FG% is typically under 0.1 points and on FT% about 0.2 points (9 weeks in 10 within 0.4 and 1.0). Give made and attempted counts if the host shows them to make it exact.";
+var FRESH_WEEK_NOTE = "The live score was not usable (the host gave neither made/attempted shots nor FG% and FT%, or other banked stats were missing), so this is a FRESH-WEEK estimate: the whole week is simulated from 0-0 and ignores what has already happened.";
+var isNum = (v) => typeof v === "number" && Number.isFinite(v);
+var asFraction = (p) => p > 1 ? p / 100 : p;
+function shotRoute(side, kind) {
+  const made = side?.[`${kind}m`], att = side?.[`${kind}a`], pct = side?.[`${kind}_pct`];
+  if (isNum(made) && isNum(att))
+    return "exact";
+  if (isNum(pct) && pct >= 0 && pct <= 100)
+    return "estimated";
+  return "missing";
+}
+function liveScoreOf(sides, need) {
+  let label = "exact";
+  for (const s of sides)
+    for (const k of ["fg", "ft"]) {
+      if (!need[k])
+        continue;
+      const r = shotRoute(s, k);
+      if (r === "missing")
+        return "fresh-week";
+      if (r === "estimated")
+        label = "estimated";
+    }
+  return label;
+}
+function bankedShooting(side, played) {
+  const one = (kind, att) => {
+    if (shotRoute(side, kind) === "exact")
+      return [side[`${kind}m`], side[`${kind}a`]];
+    const pct = side[`${kind}_pct`];
+    return isNum(pct) ? [asFraction(pct) * att, att] : [0, 0];
+  };
+  const [fgm, fga] = one("fg", played.fga), [ftm, fta] = one("ft", played.fta);
+  return { fgm, fga, ftm, fta };
+}
+
 // src/analyzeAny.ts
 var band = (p) => p >= 85 ? "elite" : p >= 60 ? "strong" : p >= 40 ? "neutral" : "weak";
 var OPTIONAL_FIELD = { fg3a: "fg3a", oreb: "oreb", dreb: "dreb", pf: "pf", dd: "dd_rate", td: "td_rate" };
@@ -1510,27 +1548,34 @@ function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thi
   const { slots, slotList } = lineupSetting(input, m.lineup_slots, "matchup.lineup_slots");
   const lineupSlots = slotList ?? slots;
   const assumptions = [];
-  const sf = m.so_far;
+  const sfIn = m.so_far;
   const need = weights ? [] : neededStats(codes);
-  if (sf) {
+  const needShots = { fg: need.includes("fgm") || need.includes("fga"), ft: need.includes("ftm") || need.includes("fta") };
+  const needOther = need.filter((k) => !["fgm", "fga", "ftm", "fta"].includes(k));
+  if (sfIn) {
     if (!m.opponent || m.opponent.length === 0)
       throw new Error("matchup.so_far needs a real matchup.opponent");
-    if (sf.games_left) {
-      for (const [t, n] of Object.entries(sf.games_left))
+    if (sfIn.games_left) {
+      for (const [t, n] of Object.entries(sfIn.games_left))
         if (!(Number.isInteger(n) && n >= 0 && n <= 7))
           throw new Error(`matchup.so_far.games_left: ${t} must be a whole number of games from 0 to 7`);
-    } else if (!(sf.remaining_share >= 0 && sf.remaining_share <= 1))
+    } else if (!(sfIn.remaining_share >= 0 && sfIn.remaining_share <= 1))
       throw new Error("matchup.so_far needs games_left, or remaining_share between 0 and 1");
     if (weights) {
-      for (const side of [sf.you, sf.opponent])
+      for (const side of [sfIn.you, sfIn.opponent])
         if (!(typeof side?.points === "number"))
           throw new Error("matchup.so_far: points must be a number for both sides (this is a points league)");
     }
-    for (const side of [sf.you, sf.opponent])
-      for (const k of need)
-        if (!(typeof side?.[k] === "number" && side[k] >= 0))
-          throw new Error(`matchup.so_far: ${k} must be a number of 0 or more for both sides (this league's categories need it)`);
+    for (const side of [sfIn.you, sfIn.opponent])
+      for (const k of ["fgm", "fga", "ftm", "fta"])
+        if (side?.[k] !== undefined && !(typeof side[k] === "number" && side[k] >= 0))
+          throw new Error(`matchup.so_far: ${k} must be a number of 0 or more`);
   }
+  const otherOk = sfIn ? [sfIn.you, sfIn.opponent].every((side) => needOther.every((k) => typeof side?.[k] === "number" && side[k] >= 0) && (!weights || typeof side?.points === "number")) : false;
+  const liveScore = sfIn && otherOk ? liveScoreOf([sfIn.you, sfIn.opponent], needShots) : "fresh-week";
+  const sf = liveScore === "fresh-week" ? undefined : sfIn;
+  if (sfIn && !sf)
+    assumptions.push(FRESH_WEEK_NOTE);
   const weekStart = m.week_start ?? thisMonday;
   const week = scheduleWeeks(snapshot).find((x) => x.start === weekStart) ?? (weekStart === thisMonday ? wk0 : undefined);
   const gamesFor = (team) => week && team ? week.games[team] ?? 0 : DEFAULT_WEEK_GAMES;
@@ -1567,7 +1612,15 @@ function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thi
         share = full > 0 ? Math.min(1, rest / full) : 1;
       }
     }
-    return { totals, remaining, share, names: res.names, rows: res.playerRows, res };
+    let banked;
+    if (sf) {
+      const given = side === "you" ? sf.you : sf.opponent;
+      const playedGames = sf.games_left ? (x) => Math.max(0, x.games - x.left) : (x) => x.games * (1 - sf.remaining_share);
+      const played = anyTotals(toAny(res, playedGames), lineupSlots).t;
+      const { fg_pct: _a, ft_pct: _b, ...rest } = given;
+      banked = { ...rest, ...bankedShooting(given, { fga: played.fga, fta: played.fta }) };
+    }
+    return { totals, remaining, share, names: res.names, rows: res.playerRows, res, banked };
   };
   const me = sideOf(input.roster, "your", "you", m.lineup);
   let opponents;
@@ -1591,7 +1644,7 @@ function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thi
       const pr2 = simulatePoints(totals, opponents, weights, { ...o, ...pp ? { progress: pp } : {} });
       return { weekWin: pr2.weekWin, weekTie: pr2.weekTie, weekLoss: pr2.weekLoss, categories: {}, distribution: [], pr: pr2 };
     }
-    const progress = sf && opp ? { me: { banked: bank(sf.you), remaining, share }, opponent: { banked: bank(sf.opponent), remaining: opp.remaining, share: opp.share } } : undefined;
+    const progress = sf && opp ? { me: { banked: bank(me.banked), remaining, share }, opponent: { banked: bank(opp.banked), remaining: opp.remaining, share: opp.share } } : undefined;
     return { ...simulateAny(totals, opponents, codes, { ...o, ...progress ? { progress } : {} }), pr: undefined };
   };
   const r = simulate(me.totals, me.remaining, me.share);
@@ -1617,6 +1670,10 @@ function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thi
   }
   if (sf)
     assumptions.push(sf.games_left ? `The week is under way: stats already banked are kept, and the games still to play (your lineup has ${Math.round(me.share * 100)}% of its week left, theirs ${Math.round(opp.share * 100)}%) are simulated from each player's own team games left. Games in progress or already counted by the league site must not be in the games left.` : `The week is under way: stats already banked are kept, and the remaining ${Math.round(sf.remaining_share * 100)}% of each team's games are simulated. Every player is assumed to have that same share of his week left, which is rough when a team's games are lopsided.`);
+  if (liveScore === "estimated") {
+    const madeCount = neededStats(codes.filter((c) => c !== "FG%" && c !== "FT%")).some((k) => k === "fgm" || k === "ftm");
+    assumptions.push(`LIVE SCORE ESTIMATED: ${ATTEMPTS_ESTIMATE_NOTE}${madeCount ? " Points and made-shot categories in this league are counted from those estimated made shots, so they are rougher than the other banked stats." : ""}`);
+  }
   const availabilityApplied = [...me.res.rows, ...opp?.res.rows ?? []].some((x) => x.lost > 0 || x.av);
   if (availabilityApplied)
     assumptions.push("Some players' games were changed by an injury status read from the league page or by a scenario you gave. Scenarios and a return day are your assumptions, not measured facts; a ramp-up after a return (default 80% output for 3 games) is also an assumption.");
@@ -1650,6 +1707,7 @@ function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thi
     lineup_slots: slots,
     weeks,
     so_far_counted: Boolean(sf),
+    live_score: liveScore,
     categories_used: codes,
     categories: weights ? {} : Object.fromEntries(codes.map((c) => [c, pct(r.categories[c])])),
     ...pr ? { expected_points: { you: Math.round(pr.expectedMe * 10) / 10, opponent: Math.round(pr.expectedOpponent * 10) / 10, margin: Math.round((pr.expectedMe - pr.expectedOpponent) * 10) / 10 } } : {},
@@ -2249,21 +2307,27 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
   const { slots, slotList } = lineupSetting(input, m.lineup_slots, "matchup.lineup_slots");
   const lineupSlots = slotList ?? slots;
   const assumptions = [];
-  const sf = m.so_far;
-  if (sf) {
+  const sfIn = m.so_far;
+  if (sfIn) {
     if (!m.opponent || m.opponent.length === 0)
       throw new Error("matchup.so_far needs a real matchup.opponent");
-    if (sf.games_left) {
-      for (const [t, n] of Object.entries(sf.games_left))
+    if (sfIn.games_left) {
+      for (const [t, n] of Object.entries(sfIn.games_left))
         if (!(Number.isInteger(n) && n >= 0 && n <= 7))
           throw new Error(`matchup.so_far.games_left: ${t} must be a whole number of games from 0 to 7`);
-    } else if (!(sf.remaining_share >= 0 && sf.remaining_share <= 1))
+    } else if (!(sfIn.remaining_share >= 0 && sfIn.remaining_share <= 1))
       throw new Error("matchup.so_far needs games_left, or remaining_share between 0 and 1");
-    for (const side of [sf.you, sf.opponent])
+    for (const side of [sfIn.you, sfIn.opponent])
       for (const k of ["pts", "reb", "ast", "stl", "blk", "fg3m", "tov", "fgm", "fga", "ftm", "fta"])
-        if (!(typeof side?.[k] === "number" && side[k] >= 0))
+        if (side?.[k] !== undefined && !(typeof side[k] === "number" && side[k] >= 0))
           throw new Error(`matchup.so_far: ${k} must be a number of 0 or more for both sides`);
   }
+  const countKeys = ["pts", "reb", "ast", "stl", "blk", "fg3m", "tov"];
+  const usable = Boolean(sfIn) && ["you", "opponent"].every((w) => countKeys.every((k) => typeof sfIn[w]?.[k] === "number"));
+  const liveScore = sfIn && usable ? liveScoreOf([sfIn.you, sfIn.opponent], { fg: true, ft: true }) : "fresh-week";
+  const sf = liveScore === "fresh-week" ? undefined : sfIn;
+  if (sfIn && !sf)
+    assumptions.push(FRESH_WEEK_NOTE);
   const weekStart = m.week_start ?? mondayOf(snapshot.generated_at);
   const week = scheduleWeeks(snapshot).find((w) => w.start === weekStart);
   const gamesFor = (team) => week && team ? week.games[team] ?? 0 : DEFAULT_WEEK_GAMES;
@@ -2293,11 +2357,17 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
     const totals = weeklyTotals(players, lineupSlots);
     if (!sf)
       return { totals, remaining: totals, share: 1, names: res.names, rows: res.playerRows, res };
+    const given = side === "you" ? sf.you : sf.opponent;
+    const bankedOf = (playedGames) => {
+      const pl = weeklyTotals(res.chosen.map((x, i) => ({ ...players[i], games: playedGames(x) })), lineupSlots);
+      const { fg_pct: _a, ft_pct: _b, ...rest2 } = given;
+      return { ...rest2, ...bankedShooting(given, pl) };
+    };
     if (!sf.games_left)
-      return { totals, remaining: scaledTotals(totals, sf.remaining_share), share: sf.remaining_share, names: res.names, rows: res.playerRows, res };
+      return { totals, remaining: scaledTotals(totals, sf.remaining_share), share: sf.remaining_share, names: res.names, rows: res.playerRows, res, banked: bankedOf((x) => x.games * (1 - sf.remaining_share)) };
     const left = res.chosen.map((x, i) => ({ ...players[i], games: x.left }));
     const full = res.chosen.reduce((s, x) => s + x.games, 0), rest = res.chosen.reduce((s, x) => s + x.left, 0);
-    return { totals, remaining: weeklyTotals(left, lineupSlots), share: full > 0 ? Math.min(1, rest / full) : 1, names: res.names, rows: res.playerRows, res };
+    return { totals, remaining: weeklyTotals(left, lineupSlots), share: full > 0 ? Math.min(1, rest / full) : 1, names: res.names, rows: res.playerRows, res, banked: bankedOf((x) => Math.max(0, x.games - x.left)) };
   };
   const me = weeklyOf(input.roster, "your", "you");
   let opponents;
@@ -2313,7 +2383,7 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
     assumptions.push(`Typical opponents: ${opponents.length} teams from ${300} simulated ${teams}-team drafts, each playing its best ${slots} players. Positions are ignored for them${slotList ? "; your team uses the league's real slots" : ""}.`);
   }
   const weeks = m.weeks ?? DEFAULT_WEEKS;
-  const progressOf = (a) => ({ me: { banked: sf.you, remaining: a.remaining, share: a.share }, opponent: { banked: sf.opponent, remaining: opp.remaining, share: opp.share } });
+  const progressOf = (a) => ({ me: { banked: a.banked, remaining: a.remaining, share: a.share }, opponent: { banked: opp.banked, remaining: opp.remaining, share: opp.share } });
   const r = simulateWeeks(me.totals, opponents, {
     weeks,
     seed: input.seed ?? 1,
@@ -2338,13 +2408,15 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
   }
   if (sf)
     assumptions.push(sf.games_left ? `The week is under way: stats already banked are kept, and the games still to play (your lineup has ${Math.round(me.share * 100)}% of its week left, theirs ${Math.round(opp.share * 100)}%) are simulated from each player's own team games left, per-game averages and luck. Games in progress or already counted by the league site must not be in the games left.` : `The week is under way: stats already banked are kept, and the remaining ${Math.round(sf.remaining_share * 100)}% of each team's games are simulated from per-game averages plus luck. Every player is assumed to have that same share of his week left, which is rough when a team's games are lopsided.`);
+  if (liveScore === "estimated")
+    assumptions.push(`LIVE SCORE ESTIMATED: ${ATTEMPTS_ESTIMATE_NOTE}`);
   const availabilityApplied = [...me.res.rows, ...opp?.res.rows ?? []].some((x) => x.lost > 0 || x.av);
   if (availabilityApplied)
     assumptions.push("Some players' games were changed by an injury status read from the league page or by a scenario you gave. Scenarios and a return day are your assumptions, not measured facts; a ramp-up after a return (default 80% output for 3 games) is also an assumption.");
   let daily;
   if (m.daily) {
     if (m.daily.from && m.daily.from > weekStart && !sf)
-      throw new Error("matchup.daily.from is later than the week's start: give matchup.so_far with the stats already banked");
+      throw new Error("matchup.daily.from is later than the week's start: give matchup.so_far with the stats already banked (counts, or at least FG% and FT%)");
     const zero = () => ({ pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, fg3m: 0, tov: 0, fgm: 0, fga: 0, ftm: 0, fta: 0 });
     const engine = {
       empty: zero,
@@ -2359,7 +2431,7 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
         weeks: n,
         seed: input.seed ?? 1,
         slots,
-        ...sf && opp ? { progress: { me: { banked: sf.you, remaining, share }, opponent: { banked: sf.opponent, remaining: opp.remaining, share: opp.share } } } : {}
+        ...sf && opp ? { progress: { me: { banked: me.banked, remaining, share }, opponent: { banked: opp.banked, remaining: opp.remaining, share: opp.share } } } : {}
       }).weekWin
     };
     daily = runDaily(input, snapshot, m, { me: me.res, weekStart, lineupSlots, weeks, engine, estimated, gamesFor, asOf: ctx.asOf, hasBanked: Boolean(sf), assumptions });
@@ -2374,6 +2446,7 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
     lineup_slots: slots,
     weeks,
     so_far_counted: Boolean(sf),
+    live_score: liveScore,
     categories: Object.fromEntries(CATEGORIES.map((c) => [c, pct(r.categories[c])])),
     week_win_pct: pct(r.weekWin),
     distribution_pct: r.distribution.map(pct),
