@@ -7,7 +7,7 @@ description: Fantasy basketball team health check for head-to-head category leag
 
 Gives a category-by-category health check of a fantasy basketball roster. A script does all the math. Your job is to collect the inputs accurately, run it, and explain the result in plain language.
 
-**Head-to-head category leagues with any mix of these categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO, plus FGM, FGA, FTM, FTA, 3PA, 3P%, OREB, DREB, PF, A/T, MIN, DD (double-doubles) and TD (triple-doubles)) are supported. Put the league's categories, exactly as the host names them, in `league.categories` of the request (for example `["Points","Rebounds","3-pointers made","Double-doubles"]`). Leave it out only for the standard nine. If a category is not on the list, the script stops and names it: say so plainly and do not approximate. A tie in the week is reported as a tie, not a win. Roto is not supported yet; points leagues use `league.scoring` (see below).
+**Head-to-head category leagues with any mix of these categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO, plus FGM, FGA, FTM, FTA, 3PA, 3P%, OREB, DREB, PF, A/T, MIN, DD (double-doubles) and TD (triple-doubles)) are supported. Put the league's categories, exactly as the host names them, in `league.categories` of the request (for example `["Points","Rebounds","3-pointers made","Double-doubles"]`). Leave it out only for the standard nine. If a category is not on the list, the script stops and names it: say so plainly and do not approximate. A tie in the week is reported as a tie, not a win. Roto leagues use `league.format: "roto"` (see the Roto section below); points leagues use `league.scoring` (see below).
 
 ## What you need
 
@@ -26,7 +26,7 @@ Gives a category-by-category health check of a fantasy basketball roster. A scri
 
 Do not stop at the first failure: say why in a few words and try the next route. This skill is read-only. Never ask for a password, never type one, and never send adds, drops or trades.
 
-**Before running anything, show the user the players you read and the league settings, and ask them to confirm.** Misread names are the most likely source of a wrong answer. Also confirm the league is head-to-head and read its category list or points scoring; roto is not supported, so say so instead of approximating. If fewer players are active than roster spots, ask whether someone is missing: an empty slot counts as an average player.
+**Before running anything, show the user the players you read and the league settings, and ask them to confirm.** Misread names are the most likely source of a wrong answer. Also confirm the league is head-to-head and read its category list or points scoring; for a roto league read the standings and every roster (see the Roto section). If fewer players are active than roster spots, ask whether someone is missing: an empty slot counts as an average player.
 
 ## Run the analysis
 
@@ -79,3 +79,26 @@ For a head-to-head points league, give `league.scoring` instead of `league.categ
 - A week already under way needs `so_far` with `you.points`, `opponent.points` and `games_left` per team (as in a category league).
 - Technical fouls, flagrant fouls, ejections and quad-doubles are not tracked: put them in `league.scoring` anyway and the script leaves them out and says `NOT SCORED` in `assumptions`. Tell the user.
 - Games caps and minimum-games rules are not modelled; say so if the league has one.
+
+## Roto leagues (season-long rotisserie)
+
+Roto has no weekly winner: every team is ranked in each category on season totals, a rank pays points (best of N teams = N, worst = 1, ties split the points), and the most points wins. The script projects the rest of the season. Ask for it by setting `league.format` to `"roto"`.
+
+**What to read** (see `../analyst/reading-a-league.md`, "Roto leagues"): the standings page (every team's name and season totals for each category) and **every team's roster**, plus your own roster. Put it in the request:
+
+```json
+{"league":{"teams":10,"roster_spots":13,"format":"roto","categories":["Points","Rebounds","Assists","Steals","Blocks","3-pointers made","Field goal percentage","Free throw percentage","Turnovers"],
+  "standings":[{"team":"My Team","me":true,"totals":{"Points":9120,"Rebounds":3410,"Assists":2100,"Steals":690,"Blocks":410,"3-pointers made":1020,"FGM":3400,"FGA":7100,"FTM":1800,"FTA":2300,"Turnovers":1050}},
+               {"team":"Other Team","roster":[{"name":"Jalen Brunson"}],"totals":{"Points":8800,"FG%":0.471,"FT%":0.79}}]},
+ "roster":[{"name":"Nikola Jokic"}]}
+```
+
+- Exactly one team has `me: true`; its roster is the top-level `roster`. Every other team needs its `roster`.
+- Counting categories need their total. For FG%, FT% (and 3P%, A/T) give the **made and attempted counts** (`FGM`+`FGA`, `FTM`+`FTA`, `3PM`+`3PA`, `AST`+`TO`) when the host shows them (ESPN's data does). When the host shows only the percentage (Yahoo), pass the percentage: banked attempts are then estimated and the output says `SHOOTING ESTIMATED`; say so.
+- The script needs the day-by-day NBA schedule (it is in the live data file, `schedule.days`), or `roto.games_left` per NBA team. Roto leagues have no `matchup`.
+
+**Read the result** (`roto: true`):
+- `team_check`: `current_points`, `expected_points` (final roto points), `expected_place`, `finish_pct` (whole percent chance of each finishing place, first to last), `first_pct` and `top_pct` (top `basis.top` places, default 3). `categories` gives each category's current rank, expected final rank, expected points and a band (elite / strong / neutral / weak by expected points in that category). `table` lists every team's current and expected points and first / top chances.
+- Quote the percents as given. Say that finish chances include luck, the games players really play, and that they are estimates.
+- `assumptions` and `basis`: include the important ones. Always state: every rostered player counts (no bench, no daily lineup limit, no games-played caps, no positions), other teams hold the rosters as they stand, and each player's share of games played is an assumption (his games so far shrunk toward the league rate).
+- The calibration of these numbers is in `docs/roto-method.md`. Do not claim more precision than it shows.

@@ -66,7 +66,7 @@ A 401/403 means the user is not signed in (or the league is private to another a
 
 **Settings (`view=mSettings`)**
 - `settings.name`, `settings.size` (teams), `status.currentMatchupPeriod` (the current week; needs `view=mStatus`).
-- `settings.scoringSettings.scoringType`: `H2H_CATEGORY`, `H2H_POINTS`, `H2H_MOST_CATEGORIES` or a roto type. Roto: say it is not supported and stop.
+- `settings.scoringSettings.scoringType`: `H2H_CATEGORY`, `H2H_POINTS`, `H2H_MOST_CATEGORIES` or a roto type. Roto: use the Roto section below (standings and every roster).
 - `settings.scoringSettings.scoringItems`: one item per scored stat, `{statId, points, isReverseItem, ...}`. Map the stat ids to the host names the engine knows:
 
 | statId | stat | statId | stat |
@@ -124,3 +124,11 @@ No recipe is bundled. Use the same ladder: a connected tool, then the pages in t
 1. Show the user what you read in compact form: settings (a one-line card summary), their roster, the opponent and roster if relevant, the banked score if relevant, the candidate list if relevant. Ask **one** confirmation. Misread names and a wrong spot count are the most likely source of a wrong answer.
 2. If an item could not be read by any route, name it and ask for exactly that item.
 3. Do not save the roster. Only the league card is saved (see `setup`).
+
+## Roto leagues (standings and every roster)
+
+A roto question needs the **standings** (every team's season totals) and **every team's roster**, not a weekly matchup.
+
+- **Yahoo:** standings at `/nba/<league-id>` (league home) or the "Standings" tab: read every team's total for each scored category. Yahoo shows season totals for counting categories and only FG% and FT% for shooting: pass the percentages (the result is labelled `SHOOTING ESTIMATED`). Each team's roster is its team page, `/nba/<league-id>/<team-id>`; read all of them (one page per team, in parallel).
+- **ESPN:** the `mTeam`, `mRoster` and `mStandings` views of the league endpoint return every team's roster and each team's season totals per category, including made and attempted counts for FG and FT (use them: the result is then exact). Read from a tab on fantasy.espn.com as above.
+- Put each team's totals under the host's category names, add `FGM`/`FGA`/`FTM`/`FTA` when available, and mark the user's own team `me: true`. Tell the user which teams or rosters you could not read; the script needs all of them.

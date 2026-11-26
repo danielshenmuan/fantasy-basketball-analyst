@@ -7,7 +7,7 @@ description: Fantasy basketball waiver-wire and streaming help for head-to-head 
 
 Ranks available players by what adding each one does to the user's chance of winning a week. A script does all the math. Every number is a difference between two simulations of the same weeks, one with the move and one without. **Never recommend a move from your own judgment: only report what the script measured.**
 
-**Head-to-head category leagues with any mix of these categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO, plus FGM, FGA, FTM, FTA, 3PA, 3P%, OREB, DREB, PF, A/T, MIN, DD (double-doubles) and TD (triple-doubles)) are supported. Put the league's categories, exactly as the host names them, in `league.categories` of the request (for example `["Points","Rebounds","3-pointers made","Double-doubles"]`). Leave it out only for the standard nine. If a category is not on the list, the script stops and names it: say so plainly and do not approximate. A tie in the week is reported as a tie, not a win. Roto is not supported yet; points leagues use `league.scoring` (see below).
+**Head-to-head category leagues with any mix of these categories** (PTS, REB, AST, STL, BLK, 3PM, FG%, FT%, TO, plus FGM, FGA, FTM, FTA, 3PA, 3P%, OREB, DREB, PF, A/T, MIN, DD (double-doubles) and TD (triple-doubles)) are supported. Put the league's categories, exactly as the host names them, in `league.categories` of the request (for example `["Points","Rebounds","3-pointers made","Double-doubles"]`). Leave it out only for the standard nine. If a category is not on the list, the script stops and names it: say so plainly and do not approximate. A tie in the week is reported as a tie, not a win. Roto leagues use `league.format: "roto"` (see the Roto section below); points leagues use `league.scoring` (see below).
 
 This skill is read-only. Never ask for a password, and never make adds, drops or trades for the user.
 
@@ -80,3 +80,7 @@ For a head-to-head points league, give `league.scoring` instead of `league.categ
 - A week already under way needs `so_far` with `you.points`, `opponent.points` and `games_left` per team (as in a category league).
 - Technical fouls, flagrant fouls, ejections and quad-doubles are not tracked: put them in `league.scoring` anyway and the script leaves them out and says `NOT SCORED` in `assumptions`. Tell the user.
 - Games caps and minimum-games rules are not modelled; say so if the league has one.
+
+## Roto leagues
+
+In a roto league (`league.format: "roto"`, standings and every roster as in the `team-check` skill) the same `waiver.candidates` list is scored by what each add does to the **rest of the season**: the output is `waiver.moves`, each with the best drop (or `null` when a roster spot is open), `delta_expected_points` (change in expected final roto points), `delta_first_pct` and `delta_top_pct` (points of chance to finish first and in the top places), and `categories_delta` (change in expected points per category). `waiver.baseline` is the team as it stands. `none_improve: true` means no candidate helps: say so. There is no weekly win chance and no add limit in this mode. Rest-of-season value counts every rostered player, with no bench or lineup limits, and a candidate's games are his share of his team's remaining games (an assumption). Never recommend a move on your own judgment; report these numbers only.
