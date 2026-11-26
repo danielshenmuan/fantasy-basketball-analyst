@@ -1,4 +1,5 @@
 import { analyzeAny, type AnyAnalyzeOutput } from "./analyzeAny";
+import { analyzeRoto, type RotoInput, type RotoOutput, type RotoStandingInput } from "./analyzeRoto";
 import { isStandardNine, parseCategories, parseWeights, untrackedScoring } from "./anycat";
 import { assessTeam, type RosterPlayer, type TeamAssessment } from "./assess";
 import { blendBaselines, blendWeight, buildBaseline } from "./baseline";
@@ -54,7 +55,12 @@ export interface AnalyzeInput {
     lineup_lock?: "daily" | "weekly";
     /** Injured-list slots in the league, and the statuses the league lets into one (read from the league settings), e.g. ["OUT"]. */
     il_slots?: number; il_eligible_statuses?: string[];
-    categories?: string[]; /** Head-to-head points league: the host's stat names and what each is worth (negative for a penalty). Use instead of `categories`. */ scoring?: Record<string, number> };
+    categories?: string[];
+    /** "roto": season-long rotisserie (needs `standings`). Default: head-to-head. */
+    format?: "roto";
+    /** Roto: every team's name, season totals and roster (see RotoStandingInput). */
+    standings?: RotoStandingInput[];
+    /** Head-to-head points league: the host's stat names and what each is worth (negative for a penalty). Use instead of `categories`. */ scoring?: Record<string, number> };
   roster: PlayerRef[];
   /** Today (YYYY-MM-DD) for injury windows. Default: the snapshot's date. */
   as_of?: string;
@@ -75,6 +81,8 @@ export interface AnalyzeInput {
   waiver?: WaiverInput;
   /** Evaluate a trade, or search one-for-one offers with another roster. */
   trade?: TradeInput;
+  /** Roto options (season end, games left, simulations, how many places count as "top"). */
+  roto?: RotoInput;
   /** Rest of the season and the playoffs (issue #10). */
   outlook?: import("./outlook").OutlookInput;
 }
@@ -97,6 +105,8 @@ export interface WaiverInput extends MoveCommon {
   top?: number;
 }
 export interface TradeInput extends MoveCommon {
+  /** Roto: the other team in the trade, by its name in league.standings. */
+  partner?: string;
   /** Players you would give / get (names). Omit both to search offers. */
   give?: PlayerRef[];
   get?: PlayerRef[];
@@ -298,8 +308,9 @@ function check(input: AnalyzeInput): void {
 }
 
 /** The entry point: the standard nine take the original path, any other category list goes to the any-category engine. */
-export function analyzeLeague(input: AnalyzeInput, snapshotIn: Snapshot): AnalyzeOutput | AnyAnalyzeOutput {
+export function analyzeLeague(input: AnalyzeInput, snapshotIn: Snapshot): AnalyzeOutput | AnyAnalyzeOutput | RotoOutput {
   check(input);
+  if (input.league.format === "roto") return analyzeRoto(input, snapshotIn);
   const snapshot = withScheduleDays(input, snapshotIn);
   const out = dispatch(input, snapshot);
   if (input.outlook) out.outlook = outlookFor(input, snapshot);

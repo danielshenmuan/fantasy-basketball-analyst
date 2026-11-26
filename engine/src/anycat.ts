@@ -20,6 +20,8 @@ const ZERO = (): BaseTotals => ({
   minutes: 0, fgm: 0, fga: 0, ftm: 0, fta: 0, fg3m: 0, fg3a: 0, oreb: 0, dreb: 0, ast: 0, stl: 0, blk: 0, turnovers: 0, pf: 0, dd: 0, td: 0,
 });
 const BASE_KEYS = Object.keys(ZERO()) as BaseKey[];
+/** All-zero base totals. */
+export const zeroBase = ZERO;
 
 type Lin = Partial<Record<BaseKey, number>>;
 export interface CategoryDef {
@@ -119,6 +121,20 @@ export function categoryValue(code: string, t: BaseTotals): number {
   const m = lin(d.den, t);
   return m > 0 ? n / m : 0;
 }
+/** Numerator and denominator of a category for a set of base totals (`den` absent for a counting category). Roto adds these to banked totals. */
+export function categoryParts(code: string, t: BaseTotals): { num: number; den?: number } {
+  const d = defOf(code);
+  return d.den ? { num: lin(d.num, t), den: lin(d.den, t) } : { num: lin(d.num, t) };
+}
+/** For a ratio category the single base stat of its numerator and of its denominator (FG% -> fgm, fga); null for a counting category. */
+export function ratioKeys(code: string): { num: BaseKey; den: BaseKey } | null {
+  const d = defOf(code);
+  if (!d.den) return null;
+  const n = Object.keys(d.num) as BaseKey[], m = Object.keys(d.den) as BaseKey[];
+  return n.length === 1 && m.length === 1 ? { num: n[0]!, den: m[0]! } : null;
+}
+/** The registry code a host category name stands for, or undefined when it is not one we know. */
+export const categoryCode = (name: string): string | undefined => ALIASES[norm(name)];
 /** Base stats a list of categories needs. */
 export function neededStats(codes: string[]): BaseKey[] {
   const s = new Set<BaseKey>();
