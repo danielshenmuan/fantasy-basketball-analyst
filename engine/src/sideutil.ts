@@ -81,7 +81,9 @@ export function resolveSide(list: PlayerRef[], label: string, side: "you" | "opp
     if (!e) continue;
     const scen = scenarioById.get(hit.player.id);
     const host = availabilityFromHost(r.injury, r.return_date, windowStart, rampOf(ctx.ramp));
-    const av = scen ? scenarioAvailability(scen, windowStart, ctx.ramp) : host.av;
+    // A scenario with no out_from that returns after the week ends loses the whole week, including days already past.
+    const scenFrom = scen && ctx.weekStart && !scen.out_from && scenarioAvailability(scen, windowStart, ctx.ramp).returnDate !== null && scenarioAvailability(scen, windowStart, ctx.ramp).returnDate! > addDays(ctx.weekStart, 6) ? ctx.weekStart : windowStart;
+    const av = scen ? scenarioAvailability(scen, scenFrom, ctx.ramp) : host.av;
     const teamGames = ctx.gamesFor(e.team);
     let games = teamGames, lost = 0, note: string | undefined;
     if (av && ctx.weekStart) {

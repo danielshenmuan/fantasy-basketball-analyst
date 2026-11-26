@@ -1163,7 +1163,8 @@ function resolveSide(list, label, side, ctx) {
       continue;
     const scen = scenarioById.get(hit.player.id);
     const host = availabilityFromHost(r.injury, r.return_date, windowStart, rampOf(ctx.ramp));
-    const av = scen ? scenarioAvailability(scen, windowStart, ctx.ramp) : host.av;
+    const scenFrom = scen && ctx.weekStart && !scen.out_from && scenarioAvailability(scen, windowStart, ctx.ramp).returnDate !== null && scenarioAvailability(scen, windowStart, ctx.ramp).returnDate > addDays(ctx.weekStart, 6) ? ctx.weekStart : windowStart;
+    const av = scen ? scenarioAvailability(scen, scenFrom, ctx.ramp) : host.av;
     const teamGames = ctx.gamesFor(e.team);
     let games = teamGames, lost = 0, note;
     if (av && ctx.weekStart) {

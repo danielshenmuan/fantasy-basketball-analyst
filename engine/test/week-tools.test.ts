@@ -46,6 +46,14 @@ describe("injury statuses and scenarios (#6)", () => {
     expect(row.games).toBeCloseTo(expected, 5);
     expect(g).toBeGreaterThan(0);
   });
+  test("returns after the week ends (mid-week as_of): all of this week's games are lost (#29)", () => {
+    const row = (o: ReturnType<typeof analyze>["matchup"]) => o!.rosters.you.find((r) => r.name === nm(star))!;
+    const o = analyze({ league, roster: withStar, as_of: day(2), matchup: { weeks: 200, scenarios: [{ name: nm(star), returns: day(10) }] } }, snapshot).matchup!;
+    const r = row(o);
+    const healthy = row(analyze({ league, roster: withStar, as_of: day(2), matchup: { weeks: 200 } }, snapshot).matchup!);
+    expect(r.games).toBe(0);
+    expect(r.games_lost).toBe(healthy.games);
+  });
   test("ramp can be switched off, or changed, by the user", () => {
     const o = analyze({ league, roster: withStar, matchup: { weeks: 500, scenarios: [{ name: nm(star), returns: day(2), ramp: false }] } }, snapshot).matchup!;
     expect(o.rosters.you.find((r) => r.name === nm(star))!.games).toBe(teamOf(star) === "PHX" ? 4 : 2);
