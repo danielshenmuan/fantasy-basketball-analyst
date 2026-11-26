@@ -11,7 +11,7 @@ import { blendWeight } from "./baseline";
 import { estimateAverages, seasonLabel, startYear } from "./history";
 import { DEFAULT_WEEKS, DEFAULT_WEEK_GAMES, mondayOf } from "./matchup";
 import type { Entry, MoveEnv, ScoreEngine, WeekEnv } from "./moves";
-import { historyOf, resolvePlayer, type Snapshot } from "./snapshot";
+import { historyOf, resolvePlayer, scheduleWeeks, type Snapshot } from "./snapshot";
 import type { Band } from "./types";
 
 /** Banked stats for a week under way, in base stats (made and attempted shots, not percentages). Missing stats count as 0. */
@@ -140,7 +140,7 @@ export function analyzeAny(input: AnalyzeInput, snapshot: Snapshot, codes: strin
     ...(w > 0 ? [`League baseline: ${Math.round((1 - w) * 100)}% ${reference}, ${Math.round(w * 100)}% ${current} (season blend after ${teamGames} games).`] : []),
   ];
 
-  const scheduleWeek = (start: string) => snapshot.schedule?.weeks.find((x) => x.start === start);
+  const scheduleWeek = (start: string) => scheduleWeeks(snapshot).find((x) => x.start === start);
   const gamesIn = (games: Record<string, number> | null) => (team?: string) => (games && team ? (games[team] ?? 0) : DEFAULT_WEEK_GAMES);
   const names: NameResult[] = [];
 
@@ -190,7 +190,7 @@ function anyMoveSetup(
   const simWeeks = common.weeks ?? 6000;
   const replacement = pool[teams * roster_spots - 1]!;
   const first = mondayOf(snapshot.generated_at);
-  const scheduled = (snapshot.schedule?.weeks ?? []).filter((x) => x.start >= first).slice(0, horizon);
+  const scheduled = (scheduleWeeks(snapshot)).filter((x) => x.start >= first).slice(0, horizon);
   const assumptions: string[] = [`Categories scored: ${codes.join(", ")}.`];
   const mk = (start: string | null, games: Record<string, number> | null): WeekEnv => {
     const gamesFor = (team?: string) => (games && team ? (games[team] ?? 0) : DEFAULT_WEEK_GAMES);
@@ -235,7 +235,7 @@ function runAnyMatchup(
       for (const k of need) if (!(typeof side?.[k] === "number" && side[k]! >= 0)) throw new Error(`matchup.so_far: ${k} must be a number of 0 or more for both sides (this league's categories need it)`);
   }
   const weekStart = m.week_start ?? thisMonday;
-  const week = snapshot.schedule?.weeks.find((x) => x.start === weekStart) ?? (weekStart === thisMonday ? wk0 : undefined);
+  const week = scheduleWeeks(snapshot).find((x) => x.start === weekStart) ?? (weekStart === thisMonday ? wk0 : undefined);
   const gamesFor = (team?: string): number => (week && team ? (week.games[team] ?? 0) : DEFAULT_WEEK_GAMES);
   const tbd = week?.tbd_slots ?? 0;
   if (tbd > 0) assumptions.push(`WARNING: ${tbd} game slot(s) in the week of ${weekStart} are still "TBD" in the NBA schedule, so some teams' game counts may be too low. Treat these numbers as rougher.`);

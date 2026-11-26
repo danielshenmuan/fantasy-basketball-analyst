@@ -780,6 +780,25 @@ function estimateAverages(h, reference, opts = {}) {
 }
 
 // src/snapshot.ts
+function scheduleWeeks(s) {
+  const sc = s.schedule;
+  if (!sc)
+    return [];
+  if (sc.weeks && sc.weeks.length)
+    return sc.weeks;
+  const by = new Map;
+  for (const date of Object.keys(sc.days ?? {}).sort()) {
+    const start = mondayOf(date);
+    const w = by.get(start) ?? { start, games: {} };
+    for (const t of sc.days[date])
+      w.games[t] = (w.games[t] ?? 0) + 1;
+    const tbd = sc.tbd_days?.[date];
+    if (tbd)
+      w.tbd_slots = (w.tbd_slots ?? 0) + tbd;
+    by.set(start, w);
+  }
+  return [...by.values()].sort((a, b) => a.start.localeCompare(b.start));
+}
 var SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
 function nameTokens(s) {
   const t = s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[.'’,]/g, "").replace(/[-_]/g, " ").split(/\s+/).filter(Boolean);
@@ -951,7 +970,7 @@ function analyzeAny(input, snapshot, codes, weights) {
     `Players are estimated from their last three seasons, weighted by recency and games played. Positions are ignored. Week-to-week luck was measured on 2025-26 weekly results for each base stat (made and attempted shots, rebounds by kind, assists, steals, blocks, turnovers, fouls, minutes); double-doubles and triple-doubles are sampled game by game from each player's own rate.`,
     ...w > 0 ? [`League baseline: ${Math.round((1 - w) * 100)}% ${reference}, ${Math.round(w * 100)}% ${current} (season blend after ${teamGames} games).`] : []
   ];
-  const scheduleWeek = (start) => snapshot.schedule?.weeks.find((x) => x.start === start);
+  const scheduleWeek = (start) => scheduleWeeks(snapshot).find((x) => x.start === start);
   const gamesIn = (games) => (team) => games && team ? games[team] ?? 0 : DEFAULT_WEEK_GAMES;
   const names = [];
   const thisMonday = mondayOf(snapshot.generated_at);
@@ -1003,7 +1022,7 @@ function anyMoveSetup(input, snapshot, codes, estimated, pool, engine, seed) {
   const simWeeks = common.weeks ?? 6000;
   const replacement = pool[teams * roster_spots - 1];
   const first = mondayOf(snapshot.generated_at);
-  const scheduled = (snapshot.schedule?.weeks ?? []).filter((x) => x.start >= first).slice(0, horizon);
+  const scheduled = scheduleWeeks(snapshot).filter((x) => x.start >= first).slice(0, horizon);
   const assumptions = [`Categories scored: ${codes.join(", ")}.`];
   const mk = (start, games) => {
     const gamesFor = (team) => games && team ? games[team] ?? 0 : DEFAULT_WEEK_GAMES;
@@ -1065,7 +1084,7 @@ function runAnyMatchup(input, snapshot, codes, estimated, pool, engine, wk0, thi
           throw new Error(`matchup.so_far: ${k} must be a number of 0 or more for both sides (this league's categories need it)`);
   }
   const weekStart = m.week_start ?? thisMonday;
-  const week = snapshot.schedule?.weeks.find((x) => x.start === weekStart) ?? (weekStart === thisMonday ? wk0 : undefined);
+  const week = scheduleWeeks(snapshot).find((x) => x.start === weekStart) ?? (weekStart === thisMonday ? wk0 : undefined);
   const gamesFor = (team) => week && team ? week.games[team] ?? 0 : DEFAULT_WEEK_GAMES;
   const tbd = week?.tbd_slots ?? 0;
   if (tbd > 0)
@@ -1511,7 +1530,7 @@ function runMatchup(input, snapshot, reference, currentSeason, baseline, mineNam
           throw new Error(`matchup.so_far: ${k} must be a number of 0 or more for both sides`);
   }
   const weekStart = m.week_start ?? mondayOf(snapshot.generated_at);
-  const week = snapshot.schedule?.weeks.find((w) => w.start === weekStart);
+  const week = scheduleWeeks(snapshot).find((w) => w.start === weekStart);
   const gamesFor = (team) => week && team ? week.games[team] ?? 0 : DEFAULT_WEEK_GAMES;
   const fromSchedule = Boolean(week);
   const tbd = week?.tbd_slots ?? 0;
@@ -1630,7 +1649,7 @@ function moveSetup(input, common, snapshot, reference, currentSeason, baseline) 
     throw new Error(`snapshot has only ${pool.length} players; need at least ${teams * roster_spots}`);
   const replacement = pool[teams * roster_spots - 1];
   const first = mondayOf(snapshot.generated_at);
-  const scheduled = (snapshot.schedule?.weeks ?? []).filter((w) => w.start >= first).slice(0, horizon);
+  const scheduled = scheduleWeeks(snapshot).filter((w) => w.start >= first).slice(0, horizon);
   const assumptions = [];
   const seed = input.seed ?? 1;
   const mk = (start, games) => {

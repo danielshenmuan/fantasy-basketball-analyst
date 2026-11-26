@@ -1,3 +1,4 @@
+import { mondayOf } from "./matchup";
 import type { PlayerHistory, SeasonLine } from "./types";
 
 /**
@@ -13,11 +14,52 @@ export interface Snapshot {
   /** Games per team per fantasy week (Monday-Sunday), from the public NBA schedule. Absent in older files. */
   schedule?: SnapshotSchedule;
 }
+export interface SnapshotWeek { start: string; games: Record<string, number>; tbd_slots?: number }
 export interface SnapshotSchedule {
   source: string;
   /** `tbd_slots`: games the source lists with a team not yet announced; those teams' counts for the week may be low. */
-  weeks: { start: string; games: Record<string, number>; tbd_slots?: number }[];
+  weeks?: SnapshotWeek[];
+  /**
+   * Day by day: date (YYYY-MM-DD) -> team abbreviations playing that day. Optional so older files still load.
+   * When `weeks` is absent it is derived from this (see `scheduleWeeks`). `tbd_days` counts games per date with a team not yet announced.
+   */
+  days?: Record<string, string[]>;
+  tbd_days?: Record<string, number>;
 }
+
+/** Games per team per fantasy week: the file's `weeks`, else counted from `days`. Empty when there is no schedule. */
+export function scheduleWeeks(s: Snapshot): SnapshotWeek[] {
+  const sc = s.schedule;
+  if (!sc) return [];
+  if (sc.weeks && sc.weeks.length) return sc.weeks;
+  const by = new Map<string, SnapshotWeek>();
+  for (const date of Object.keys(sc.days ?? {}).sort()) {
+    const start = mondayOf(date);
+    const w = by.get(start) ?? { start, games: {} };
+    for (const t of sc.days![date]!) w.games[t] = (w.games[t] ?? 0) + 1;
+    const tbd = sc.tbd_days?.[date];
+    if (tbd) w.tbd_slots = (w.tbd_slots ?? 0) + tbd;
+    by.set(start, w);
+  }
+  return [...by.values()].sort((a, b) => a.start.localeCompare(b.start));
+}
+
+/** Games each team plays from `from` to `to` inclusive (YYYY-MM-DD). Null when the file has no day-by-day schedule. */
+export function gamesBetween(s: Snapshot, from: string, to: string): Record<string, number> | null {
+  const days = s.schedule?.days;
+  if (!days) return null;
+  const out: Record<string, number> = {};
+  for (const [d, teams] of Object.entries(days)) if (d >= from && d <= to) for (const t of teams) out[t] = (out[t] ?? 0) + 1;
+  return out;
+}
+
+/** Dates (sorted) on which a team plays, from `from` to `to` inclusive. Null without a day-by-day schedule. */
+export function gameDays(s: Snapshot, team: string, from: string, to: string): string[] | null {
+  const days = s.schedule?.days;
+  if (!days) return null;
+  return Object.keys(days).filter((d) => d >= from && d <= to && days[d]!.includes(team)).sort();
+}
+
 export interface SnapshotPlayer {
   id: number;
   name: string;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fx from "./fixtures/players-2025-26.json";
-import { nameTokens, resolvePlayer, type PlayerSeason, type SnapshotPlayer } from "../src";
+import { gameDays, gamesBetween, nameTokens, resolvePlayer, scheduleWeeks, type PlayerSeason, type Snapshot, type SnapshotPlayer } from "../src";
 
 const fixture = fx.players as unknown as PlayerSeason[];
 const players: SnapshotPlayer[] = fixture.map((p) => ({
@@ -66,5 +66,31 @@ describe("host-style abbreviated names (initial + surname + team)", () => {
     expect(r("Z. Johnson")).toBe("amb:1,2,3,7");
     expect(r("Z. Johnson (ATL)")).toBe("amb:3");
     expect(r("Z. Nobodyson")).toBe("not_found");
+  });
+});
+
+describe("day-by-day schedule", () => {
+  const snap = {
+    version: 1, generated_at: "x", reference_season: "2025-26", players: [],
+    schedule: {
+      source: "test",
+      days: { "2026-11-23": ["BOS", "NYK"], "2026-11-25": ["BOS"], "2026-11-29": ["NYK"], "2026-11-30": ["BOS"] },
+      tbd_days: { "2026-11-30": 2 },
+    },
+  } as unknown as Snapshot;
+  test("weeks are derived from days (Monday-Sunday)", () => {
+    const w = scheduleWeeks(snap);
+    expect(w.map((x) => x.start)).toEqual(["2026-11-23", "2026-11-30"]);
+    expect(w[0]!.games).toEqual({ BOS: 2, NYK: 2 });
+    expect(w[1]!.tbd_slots).toBe(2);
+  });
+  test("games between dates and a team's game days", () => {
+    expect(gamesBetween(snap, "2026-11-24", "2026-11-29")).toEqual({ BOS: 1, NYK: 1 });
+    expect(gameDays(snap, "BOS", "2026-11-23", "2026-11-29")).toEqual(["2026-11-23", "2026-11-25"]);
+  });
+  test("file's own weeks win; no days gives null", () => {
+    const s2 = { ...snap, schedule: { source: "t", weeks: [{ start: "2026-11-23", games: { BOS: 9 } }] } } as unknown as Snapshot;
+    expect(scheduleWeeks(s2)[0]!.games.BOS).toBe(9);
+    expect(gamesBetween(s2, "2026-11-23", "2026-11-29")).toBeNull();
   });
 });

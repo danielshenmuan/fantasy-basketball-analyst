@@ -4,7 +4,7 @@ import { assessTeam, type RosterPlayer, type TeamAssessment } from "./assess";
 import { blendBaselines, blendWeight, buildBaseline } from "./baseline";
 import { categoryZ } from "./fantasyValue";
 import { simulateBenchmark, type SimPlayer } from "./simulate";
-import { historyOf, resolvePlayer, type Snapshot } from "./snapshot";
+import { historyOf, resolvePlayer, scheduleWeeks, type Snapshot } from "./snapshot";
 import { estimateAverages, seasonLabel, startYear } from "./history";
 import { evaluateTrade, rankWaiverMoves, scoreRoster, searchTrades, type Entry, type MoveEnv, type Score, type WeekEnv } from "./moves";
 import {
@@ -330,7 +330,7 @@ function runMatchup(
 
   // Games per team this week, from the schedule in the snapshot.
   const weekStart = m.week_start ?? mondayOf(snapshot.generated_at);
-  const week = snapshot.schedule?.weeks.find((w) => w.start === weekStart);
+  const week = scheduleWeeks(snapshot).find((w) => w.start === weekStart);
   const gamesFor = (team: string | undefined): number => (week && team ? (week.games[team] ?? 0) : DEFAULT_WEEK_GAMES);
   const fromSchedule = Boolean(week);
   const tbd = week?.tbd_slots ?? 0;
@@ -470,7 +470,7 @@ function moveSetup(
   const replacement = pool[teams * roster_spots - 1]!;
 
   const first = mondayOf(snapshot.generated_at);
-  const scheduled = (snapshot.schedule?.weeks ?? []).filter((w) => w.start >= first).slice(0, horizon);
+  const scheduled = (scheduleWeeks(snapshot)).filter((w) => w.start >= first).slice(0, horizon);
   const assumptions: string[] = [];
   const seed = input.seed ?? 1;
   const mk = (start: string | null, games: Record<string, number> | null): WeekEnv => {
