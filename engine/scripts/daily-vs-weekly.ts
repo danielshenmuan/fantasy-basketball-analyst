@@ -2,8 +2,8 @@
  * Daily vs weekly week-win chance on realistic rosters (issue #33). MEASURES only; changes nothing.
  * Run: bun scripts/daily-vs-weekly.ts snapshot.json [--pairs 60] [--week 2026-11-23] [--sims 1500]
  * snapshot.json: https://storage.googleapis.com/fantasy-survivors-analyst-data/snapshot.json (it has schedule.days).
- * For each random pair of 13-player rosters from the 150 best players it reports the weekly number, the daily number as the
- * product quotes it (only your side fielded day by day), and the daily number with the opponent fielded day by day too,
+ * For each random pair of 13-player rosters from the 150 best players it reports the weekly number, the daily number with only
+ * your side fielded day by day (the old headline), and the daily number with both fielded day by day (now the headline),
  * once with a bare 10-starter lineup and once with positions and slots; plus games the bench adds on idle days.
  */
 import { readFileSync } from "node:fs";
@@ -44,7 +44,7 @@ function run(pos: boolean) {
     const league = { teams: 12, roster_spots: 13, lineup_lock: "daily" as const, ...(pos ? { slots: SLOTS } : {}) };
     const o = analyze({ league, roster: side(s.slice(0, 13)), matchup: { week_start: WEEK, weeks: SIMS, ...(pos ? {} : { lineup_slots: 10 }), opponent: side(s.slice(13)), daily: {} }, as_of: WEEK }, snap).matchup!;
     const c = o.daily!.compare_with_weekly;
-    rs.push({ W: c.weekly_week_win_pct, D: c.daily_week_win_pct, S: c.opponent_daily_week_win_pct!, yg: c.your_games.weekly_lineup, ygd: c.your_games.from_bench, og: c.opponent_games!.weekly_lineup, ogd: c.opponent_games!.from_bench });
+    rs.push({ W: c.weekly_week_win_pct, D: c.you_only_daily_week_win_pct!, S: c.daily_week_win_pct, yg: c.your_games.weekly_lineup, ygd: c.your_games.from_bench, og: c.opponent_games!.weekly_lineup, ogd: c.opponent_games!.from_bench });
   }
   return rs;
 }

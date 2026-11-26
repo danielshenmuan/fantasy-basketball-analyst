@@ -1015,23 +1015,40 @@ function runDaily(input, snapshot, m, a) {
       if (day < days[0] || day > weekEnd)
         throw new Error(`daily: ${day} is outside the days left (${days[0]} to ${weekEnd})`);
   const BIG = 1e6;
-  const pickDay = (rows, day) => {
-    const avail = rows.filter((r) => r.active && (r.dates.get(day) ?? 0) > 0 && !benches.get(r.entry.id)?.has(day)).map((r) => ({ r, value: r.entry.value + (starts.get(r.entry.id)?.has(day) ? BIG : 0), positions: r.positions, games: r.dates.get(day) }));
+  const setOf = (list) => new Map((list ?? []).map((x) => {
+    if (x.date < a.weekStart || x.date > weekEnd)
+      throw new Error(`daily: set lineup for ${x.date} is outside the week (${a.weekStart} to ${weekEnd})`);
+    return [x.date, new Set(x.starters.map(byName))];
+  }));
+  const mySet = setOf(d.set_lineup), oppSet = setOf(d.opponent_set_lineup);
+  const pickDay = (rows, day, mine = true) => {
+    const set = (mine ? mySet : oppSet).get(day);
+    const avail = rows.filter((r) => r.active && (r.dates.get(day) ?? 0) > 0 && (!set || set.has(r.entry.id)) && !(mine && benches.get(r.entry.id)?.has(day))).map((r) => ({ r, value: r.entry.value + (mine && starts.get(r.entry.id)?.has(day) ? BIG : 0), positions: r.positions, games: r.dates.get(day) }));
     return assignLineup(avail, a.lineupSlots);
   };
-  const dayLineups = (rows) => {
+  const dayLineups = (rows, mine = true) => {
     let tot = a.engine.empty(), games = 0;
     for (const day of days) {
-      const picks = pickDay(rows, day);
+      const picks = pickDay(rows, day, mine);
       tot = a.engine.plus(tot, a.engine.dayTotals(picks.map((p) => ({ entry: p.player.r.entry, weight: p.player.r.dates.get(day), positions: p.player.r.positions, name: p.player.r.entry.name }))));
       games += picks.reduce((s, p) => s + p.player.r.dates.get(day), 0);
     }
     return { tot, games };
   };
-  const evaluate = (rows, weeks, fullGames2, opponent) => {
+  const orows = a.opp ? a.opp.rows.map(toRow) : undefined;
+  const oppDay = (() => {
+    if (!orows)
+      return;
+    const od = dayLineups(orows, false);
+    let g = 0;
+    for (let x = a.weekStart;x <= weekEnd; x = addDays(x, 1))
+      g += pickDay(orows, x, false).reduce((u, p) => u + p.player.r.dates.get(x), 0);
+    return { remaining: od.tot, share: g > 0 ? Math.min(1, od.games / g) : 1 };
+  })();
+  const evaluate = (rows, weeks, fullGames2, opponent = oppDay) => {
     const { tot, games } = dayLineups(rows);
     const share = fullGames2 > 0 ? Math.min(1, games / fullGames2) : 1;
-    return { win: a.engine.win(tot, share, weeks, opponent), share, games };
+    return { win: a.engine.win(tot, share, weeks, opponent ?? undefined), share, games };
   };
   const fullGames = (() => {
     let g = 0;
@@ -1080,9 +1097,9 @@ function runDaily(input, snapshot, m, a) {
     benches.clear();
     const gamesIn = (rs) => rs.reduce((t, r) => t + days.reduce((u, x) => u + (r.dates.get(x) ?? 0), 0), 0);
     const round1 = (x) => Math.round(x * 10) / 10;
-    const games = (chosen, rows) => {
+    const games = (chosen, rows, mine = true) => {
       const weekly = gamesIn(chosen.map((c) => rows.find((r) => r.entry.id === c.entry.id)).filter((r) => r.active));
-      const daily = dayLineups(rows).games;
+      const daily = dayLineups(rows, mine).games;
       return { weekly_lineup: round1(weekly), daily_lineup: round1(daily), from_bench: round1(daily - weekly) };
     };
     const plain = evaluate(base, a.weeks, fullGames).win;
@@ -1091,24 +1108,17 @@ function runDaily(input, snapshot, m, a) {
       daily_week_win_pct: Math.round(plain * 100),
       your_games: games(a.me.chosen, base)
     };
-    if (a.opp) {
-      const orows = a.opp.rows.map(toRow);
-      cmp.opponent_games = games(a.opp.chosen, orows);
-      const od = dayLineups(orows);
-      const ofull = (() => {
-        let g = 0;
-        for (let x = a.weekStart;x <= weekEnd; x = addDays(x, 1))
-          g += pickDay(orows, x).reduce((u, p) => u + p.player.r.dates.get(x), 0);
-        return g;
-      })();
-      cmp.opponent_daily_week_win_pct = Math.round(evaluate(base, a.weeks, fullGames, { remaining: od.tot, share: ofull > 0 ? Math.min(1, od.games / ofull) : 1 }).win * 100);
+    if (a.opp && orows) {
+      const og = games(a.opp.chosen, orows, false);
+      cmp.opponent_games = og;
+      cmp.you_only_daily_week_win_pct = Math.round(evaluate(base, a.weeks, fullGames, null).win * 100);
     }
     for (const [k, v] of savedS)
       starts.set(k, v);
     for (const [k, v] of savedB)
       benches.set(k, v);
     out.compare_with_weekly = cmp;
-    notes.push(`The weekly matchup number counts each lineup player's games all week; the daily number fields the best lineup every day, so bench players start on days when starters have no game (you: ${cmp.your_games.from_bench >= 0 ? "+" : ""}${cmp.your_games.from_bench} games${cmp.opponent_games ? `, opponent: ${cmp.opponent_games.from_bench >= 0 ? "+" : ""}${cmp.opponent_games.from_bench} games` : ""}). The headline daily number gives only your side this day-by-day fielding${a.opp ? `; with the opponent fielding his best lineup each day too it is ${cmp.opponent_daily_week_win_pct}%` : ""}. See compare_with_weekly.`);
+    notes.push(`The weekly matchup number counts each lineup player's games all week; the daily number fields the best lineup every day, so bench players start on days when starters have no game (you: ${cmp.your_games.from_bench >= 0 ? "+" : ""}${cmp.your_games.from_bench} games${cmp.opponent_games ? `, opponent: ${cmp.opponent_games.from_bench >= 0 ? "+" : ""}${cmp.opponent_games.from_bench} games` : ""}). ${a.opp ? "Both rosters are fielded day by day. " : "No opponent roster was given: the typical opponents are weekly totals, so this number favours you; give the real opponent. "}See compare_with_weekly.`);
   }
   if (d.stream) {
     const s = d.stream;

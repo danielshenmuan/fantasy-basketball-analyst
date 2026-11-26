@@ -186,7 +186,7 @@ describe("daily lineups and streaming (#5)", () => {
     expect(c.your_games.from_bench).toBeGreaterThan(0);
     expect(c.your_games.daily_lineup).toBeCloseTo(c.your_games.weekly_lineup + c.your_games.from_bench, 1);
     expect(c.opponent_games!.from_bench).toBeGreaterThanOrEqual(0);
-    expect(c.opponent_daily_week_win_pct).toBeGreaterThanOrEqual(0);
+    expect(c.you_only_daily_week_win_pct).toBeGreaterThan(c.daily_week_win_pct);
     expect(d.notes.join(" ")).toContain("compare_with_weekly");
     // the weekly numbers are the same with or without the daily section
     const plain = analyze(input({}, { matchup: { weeks: 1500, lineup_slots: 5, opponent: opp } }), snapshot).matchup!;
@@ -194,7 +194,16 @@ describe("daily lineups and streaming (#5)", () => {
     // no real opponent: only your side is explained
     const typical = analyze(input({}), snapshot).matchup!.daily!.compare_with_weekly;
     expect(typical.opponent_games).toBeUndefined();
-    expect(typical.opponent_daily_week_win_pct).toBeUndefined();
+    expect(typical.you_only_daily_week_win_pct).toBeUndefined();
+  });
+  test("a lineup already set on the site is used on that day; other days use the best lineup", () => {
+    const sitting = weak.slice(0, 5).map((i) => nm(i));
+    const o = analyze(input({ set_lineup: [{ date: day(0), starters: sitting }] }), snapshot).matchup!.daily!;
+    const d0 = o.lineup_by_day.find((x) => x.date === day(0))!;
+    expect(d0.starters.map((x) => x.name).every((n) => sitting.includes(n))).toBe(true);
+    const free = analyze(input({}), snapshot).matchup!.daily!;
+    expect(o.lineup_by_day.find((x) => x.date === day(2))!.starters).toEqual(free.lineup_by_day.find((x) => x.date === day(2))!.starters);
+    expect(() => analyze(input({ set_lineup: [{ date: "2030-01-01", starters: sitting }] }), snapshot)).toThrow("outside the week");
   });
   test("a weekly lock refuses, and so does missing day-by-day data", () => {
     expect(() => analyze({ ...input({}), league: { ...league, lineup_lock: "weekly" } }, snapshot)).toThrow("locks lineups weekly");

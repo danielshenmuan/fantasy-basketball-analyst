@@ -32,3 +32,6 @@ Quotes use pre-week information and the real day-by-day team schedule. Outcome R
 The base rate of "you win" is 50.0%. The headline daily number is worse than a coin flip (a quoted 90-100% won 70%). Fielding both sides day by day is slightly better than the weekly number (Brier 0.2256 vs 0.2289, inside one standard error of each other; slope 0.70 vs 0.65) and is still overconfident, like the weekly one, mainly because injuries and rest are not known in advance.
 
 Caveat: the realised daily lineup uses hindsight on who played each day (real managers see most inactives before lock); rosters are random draws from the 182 best players with 13 players and 10 slots, no positions.
+
+## Decision and fix (owner, 2026-11-26)
+Use the daily model for daily-lineup leagues. The headline `daily.baseline_week_win_pct` now fields both rosters day by day when a real opponent is given (the old one-sided number is kept as `compare_with_weekly.you_only_daily_week_win_pct`, not for quoting). The lineup already set on My Team can be passed as `daily.set_lineup` / `opponent_set_lineup`. Back-test row "Daily, both sides day by day" above is the number now quoted.
