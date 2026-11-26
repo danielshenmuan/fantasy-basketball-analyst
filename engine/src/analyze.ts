@@ -126,7 +126,10 @@ export interface WaiverOutput {
     add_confidence: "high" | "medium" | "low" | "none";
     /** Games of history behind the add's estimate (recency-weighted, capped per season). */
     add_games_basis: number;
-    categories_delta_points: MoveCategoryDelta;
+    /** Not given for points leagues (no categories): see `expected_week_points_delta`. */
+    categories_delta_points?: MoveCategoryDelta;
+    /** Points leagues only: change in expected fantasy points for the week against the roster as it stands. */
+    expected_week_points_delta?: number;
   }[];
   /**
    * Candidates not ranked. This is a limit of the model, not a verdict on the player: it counts only the best
@@ -807,7 +810,7 @@ export function waiverWith(input: AnalyzeInput, snapshot: Snapshot, st: MoveSetu
     moves: moves.map((m) => ({
       add: m.add.name, drop: m.drop?.name ?? null, week_win_pct: winPct(m.after.weekWin),
       delta_points: pct1(m.delta), drop_only_points: pct1(m.dropOnlyDelta), add_effect_points: pct1(m.addDelta),
-      add_confidence: m.add.confidence ?? "none", add_games_basis: Math.round(m.add.effectiveGames ?? 0), categories_delta_points: catDelta(m.categoryDelta),
+      add_confidence: m.add.confidence ?? "none", add_games_basis: Math.round(m.add.effectiveGames ?? 0), ...(m.pointsDelta !== undefined ? { expected_week_points_delta: Math.round(m.pointsDelta * 10) / 10 } : { categories_delta_points: catDelta(m.categoryDelta) }),
     })),
     ...(bestUse ? { best_use_of_adds: bestUse } : {}),
     il_moves: plan.moved, open_spots: plan.openSpots, injury_notes: notes,

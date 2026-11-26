@@ -1957,7 +1957,7 @@ function rankWaiverMoves(roster, candidates, env, opts = {}) {
       unranked.push({ add, reason: "no-gain-from-add", drop });
       continue;
     }
-    moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: only - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline) });
+    moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: only - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline), ...pointsDiff(after, baseline) !== undefined ? { pointsDelta: pointsDiff(after, baseline) } : {} });
   }
   moves.sort((a, b) => b.addDelta - a.addDelta);
   return { baseline, moves, unranked };
@@ -2665,7 +2665,7 @@ function waiverWith(input, snapshot, st) {
       add_effect_points: pct1(m.addDelta),
       add_confidence: m.add.confidence ?? "none",
       add_games_basis: Math.round(m.add.effectiveGames ?? 0),
-      categories_delta_points: catDelta(m.categoryDelta)
+      ...m.pointsDelta !== undefined ? { expected_week_points_delta: Math.round(m.pointsDelta * 10) / 10 } : { categories_delta_points: catDelta(m.categoryDelta) }
     })),
     ...bestUse ? { best_use_of_adds: bestUse } : {},
     il_moves: plan.moved,

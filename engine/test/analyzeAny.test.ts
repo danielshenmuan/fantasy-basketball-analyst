@@ -135,3 +135,28 @@ describe("trade output names only what the league scores (#30)", () => {
     expect("expected_week_points_delta" in t.you!).toBe(false);
   });
 });
+
+describe("waiver output names only what the league scores (#31)", () => {
+  const mineRoster = ["Quentin Grimes", "Onyeka Okongwu", "Kevin Porter", "Herb Jones", "Gui Santos"].map((name) => ({ name }));
+  const candidates = [{ name: "James Harden" }, { name: "Jayson Tatum" }, { name: "Darius Garland" }];
+  const run = (lg: object) => (analyzeLeague({ league: { ...league, ...lg }, roster: mineRoster, waiver: { candidates, weeks: 800 } } as never, snapshot) as AnyAnalyzeOutput).waiver!;
+  test("a points league gets the change in expected week points and no category block", () => {
+    const w = run({ scoring: { Points: 1, Rebounds: 1.2, Assists: 1.5, Steals: 3, Blocks: 3, Turnovers: -1 } });
+    expect(w.moves.length).toBeGreaterThan(0);
+    for (const m of w.moves) { expect("categories_delta_points" in m).toBe(false); expect(typeof m.expected_week_points_delta).toBe("number"); }
+  });
+  test("a custom list gets the league's own categories", () => {
+    const w = run({ categories: cats });
+    expect(w.moves.length).toBeGreaterThan(0);
+    for (const m of w.moves) {
+      expect(Object.keys(m.categories_delta_points!).sort()).toEqual(["3PM", "AST", "BLK", "DD", "FG%", "FT%", "PF", "PTS", "REB", "STL", "TO"]);
+      expect(Object.values(m.categories_delta_points!).every((v) => Number.isFinite(v))).toBe(true);
+      expect("expected_week_points_delta" in m).toBe(false);
+    }
+  });
+  test("the standard nine keep their nine categories", () => {
+    const w = analyze({ league, roster: mineRoster, waiver: { candidates, weeks: 800 } } as never, snapshot).waiver!;
+    expect(w.moves.length).toBeGreaterThan(0);
+    expect(Object.keys(w.moves[0]!.categories_delta_points!)).toEqual(["PTS", "REB", "AST", "STL", "BLK", "3PM", "FG%", "FT%", "TO"]);
+  });
+});

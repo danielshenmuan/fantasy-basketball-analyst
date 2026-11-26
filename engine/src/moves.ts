@@ -104,6 +104,8 @@ export interface Move {
   /** delta minus dropOnlyDelta: what the added player contributes. Only moves where this and `delta` are above zero are ranked. */
   addDelta: number;
   categoryDelta: Record<string, number>;
+  /** Points leagues: change in expected week points against the roster as it stands. */
+  pointsDelta?: number;
 }
 /** bench-only: would not enter the lineup. no-gain-from-add: enters, but adds nothing beyond the drop. below-top: ranked worse than the moves shown. */
 export interface Unranked {
@@ -184,7 +186,7 @@ export function rankWaiverMoves(
     if (addDelta <= 0) { unranked.push({ add, reason: "no-gain-from-add", drop }); continue; }
     // A move that lowers the weekly win chance is never recommended, whatever the add contributes (#27).
     if (after.weekWin - baseline.weekWin <= 0) { unranked.push({ add, reason: "no-gain-from-add", drop }); continue; }
-    moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: only - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline) });
+    moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: only - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline), ...(pointsDiff(after, baseline) !== undefined ? { pointsDelta: pointsDiff(after, baseline) } : {}) });
   }
   moves.sort((a, b) => b.addDelta - a.addDelta);
   return { baseline, moves, unranked };
