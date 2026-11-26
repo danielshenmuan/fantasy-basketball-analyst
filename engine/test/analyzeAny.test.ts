@@ -104,3 +104,34 @@ describe("untracked scoring stats", () => {
     expect(out.assumptions.some((a) => a.startsWith("NOT SCORED: Technical fouls, Ejections, Quadruple-doubles"))).toBe(true);
   });
 });
+
+describe("trade output names only what the league scores (#30)", () => {
+  const give = [{ name: "Quentin Grimes" }], get = [{ name: "Herb Jones" }];
+  const other = [{ name: "Herb Jones" }, { name: "Gui Santos" }, { name: "Kevin Porter" }];
+  const mineRoster = roster.filter((r) => r.name !== "Herb Jones" && r.name !== "Gui Santos");
+  const NINE = ["PTS", "REB", "AST", "STL", "BLK", "3PM", "FG%", "FT%", "TO"];
+  test("a points league gets the change in expected week points and no category block", () => {
+    const scoring = { Points: 1, Rebounds: 1.2, Assists: 1.5, Steals: 3, Blocks: 3, Turnovers: -1 };
+    const t = (analyzeLeague({ league: { ...league, scoring }, roster: mineRoster, trade: { give, get, other_roster: other, weeks: 600 } } as never, snapshot) as AnyAnalyzeOutput).trade!;
+    for (const s of [t.you!, t.other_team!]) {
+      expect("categories_delta_points" in s).toBe(false);
+      expect(typeof s.expected_week_points_delta).toBe("number");
+    }
+    expect(t.you!.expected_week_points_delta).not.toBe(0);
+    const search = (analyzeLeague({ league: { ...league, scoring }, roster: mineRoster, trade: { search: true, other_roster: other, weeks: 600 } } as never, snapshot) as AnyAnalyzeOutput).trade!;
+    for (const o of search.offers ?? []) for (const s of [o.you, o.other_team]) { expect("categories_delta_points" in s).toBe(false); expect(typeof s.expected_week_points_delta).toBe("number"); }
+  });
+  test("a custom category list gets the league's own categories", () => {
+    const t = (analyzeLeague({ league: { ...league, categories: cats }, roster: mineRoster, trade: { give, get, other_roster: other, weeks: 600 } } as never, snapshot) as AnyAnalyzeOutput).trade!;
+    const keys = Object.keys(t.you!.categories_delta_points!).sort();
+    expect(keys).toEqual([...new Set(["PTS", "REB", "AST", "STL", "BLK", "3PM", "TO", "DD", "FG%", "FT%", "PF"])].sort());
+    expect(Object.keys(t.other_team!.categories_delta_points!).sort()).toEqual(keys);
+    expect(Object.values(t.you!.categories_delta_points!).every((v) => typeof v === "number" && Number.isFinite(v))).toBe(true);
+    expect("expected_week_points_delta" in t.you!).toBe(false);
+  });
+  test("the standard nine keep their nine categories", () => {
+    const t = analyze({ league, roster: mineRoster, trade: { give, get, other_roster: other, weeks: 600 } } as never, snapshot).trade!;
+    expect(Object.keys(t.you!.categories_delta_points!)).toEqual(NINE);
+    expect("expected_week_points_delta" in t.you!).toBe(false);
+  });
+});

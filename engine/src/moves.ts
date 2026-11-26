@@ -39,7 +39,7 @@ export interface ScoreEngine {
   /** Categories this engine scores, in order. */
   codes: string[];
   totals(list: Entry[], gamesOf: (e: Entry) => number, slots: Slots): unknown;
-  simulate(me: unknown, opponents: unknown[], o: { weeks: number; seed: number; slots: number }): { weekWin: number; categories: Record<string, number> };
+  simulate(me: unknown, opponents: unknown[], o: { weeks: number; seed: number; slots: number }): { weekWin: number; categories: Record<string, number>; /** Points leagues only: expected week points of your side. */ expectedPoints?: number };
 }
 
 export interface MoveEnv {
@@ -60,7 +60,7 @@ export interface MoveEnv {
   engine?: ScoreEngine;
 }
 
-export interface Score { weekWin: number; categories: Record<string, number> }
+export interface Score { weekWin: number; categories: Record<string, number>; /** Points leagues only: expected week points, averaged over the weeks. */ points?: number }
 
 /** Weekly win chance and per-category win chance of a roster, averaged over the environment's weeks. */
 const lineupOf = (env: MoveEnv): Slots => env.slotList ?? env.slots;
@@ -71,7 +71,7 @@ const gamesIn = (w: WeekEnv) => (e: Entry): number => (w.gamesOf ? w.gamesOf(e) 
 export function scoreRoster(roster: Entry[], env: MoveEnv, simWeeks = env.simWeeks): Score {
   const pad = Math.max(0, env.slots - roster.length);
   const list = pad > 0 ? [...roster, ...Array<Entry>(pad).fill(fillerOf(env))] : roster;
-  let week = 0;
+  let week = 0, pts: number | undefined;
   const codes = env.engine?.codes ?? [...CATEGORIES];
   const cats: Record<string, number> = Object.fromEntries(codes.map((c) => [c, 0]));
   for (const w of env.weeks) {
@@ -81,15 +81,18 @@ export function scoreRoster(roster: Entry[], env: MoveEnv, simWeeks = env.simWee
           weeklyTotals(list.map((p) => ({ averages: p.averages, games: gamesIn(w)(p), value: p.value, positions: p.positions })), lineupOf(env)),
           w.opponents as WeeklyTotals[], { weeks: simWeeks, seed: env.seed, slots: env.slots });
     week += r.weekWin;
+    if (r.expectedPoints !== undefined) pts = (pts ?? 0) + r.expectedPoints;
     for (const c of codes) cats[c]! += r.categories[c]!;
   }
   const n = env.weeks.length;
   for (const c of codes) cats[c]! /= n;
-  return { weekWin: week / n, categories: cats };
+  return { weekWin: week / n, categories: cats, ...(pts !== undefined ? { points: pts / n } : {}) };
 }
 
 const diff = (a: Score, b: Score): Record<string, number> =>
   Object.fromEntries(Object.keys(a.categories).map((c) => [c, a.categories[c]! - b.categories[c]!]));
+/** Change in expected week points (points leagues only). */
+const pointsDiff = (a: Score, b: Score): number | undefined => (a.points !== undefined && b.points !== undefined ? a.points - b.points : undefined);
 
 export interface Move {
   /** `drop` is null when an open roster spot (or an injured-list slot) means nobody has to go. */
@@ -187,7 +190,7 @@ export function rankWaiverMoves(
   return { baseline, moves, unranked };
 }
 
-export interface TradeResult { before: Score; after: Score; delta: number; categoryDelta: Record<string, number>; /** Required slots nobody can fill after the trade (empty: none, or slots not checked). */ emptySlots: string[] }
+export interface TradeResult { before: Score; after: Score; delta: number; categoryDelta: Record<string, number>; /** Points leagues: change in expected week points. */ pointsDelta?: number; /** Required slots nobody can fill after the trade (empty: none, or slots not checked). */ emptySlots: string[] }
 
 /** What a trade does to one side: remove `give`, add `get`. */
 export function evaluateTrade(roster: Entry[], give: Entry[], get: Entry[], env: MoveEnv): TradeResult {
@@ -195,7 +198,7 @@ export function evaluateTrade(roster: Entry[], give: Entry[], get: Entry[], env:
   const before = scoreRoster(roster, env);
   const next = roster.filter((p) => !giveIds.has(p.id)).concat(get);
   const after = scoreRoster(next, env);
-  return { before, after, delta: after.weekWin - before.weekWin, categoryDelta: diff(after, before), emptySlots: slotsBroken(roster, next, env) };
+  return { before, after, delta: after.weekWin - before.weekWin, categoryDelta: diff(after, before), ...(pointsDiff(after, before) !== undefined ? { pointsDelta: pointsDiff(after, before) } : {}), emptySlots: slotsBroken(roster, next, env) };
 }
 
 export interface Offer { give: Entry; get: Entry; mine: TradeResult; theirs: TradeResult }

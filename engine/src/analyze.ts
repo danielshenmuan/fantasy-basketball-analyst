@@ -163,7 +163,7 @@ export interface NotRanked {
   /** Plain-words sentence to relay, including the model limit. */
   explanation: string;
 }
-export interface TradeSide { before_week_win_pct: number; after_week_win_pct: number; delta_points: number; categories_delta_points: MoveCategoryDelta; /** Required slots nobody can fill after the trade. Not recommended when this is not empty. */ empty_slots?: string[] }
+export interface TradeSide { before_week_win_pct: number; after_week_win_pct: number; delta_points: number; /** Not given for points leagues (there are no categories): see `expected_week_points_delta`. */ categories_delta_points?: MoveCategoryDelta; /** Points leagues only: change in expected fantasy points for the week. */ expected_week_points_delta?: number; /** Required slots nobody can fill after the trade. Not recommended when this is not empty. */ empty_slots?: string[] }
 export interface TradeOutput {
   mode: "evaluate" | "search";
   weeks_used: string[];
@@ -693,9 +693,10 @@ export function resolveList(
 }
 
 export const pct1 = (x: number) => Math.round(x * 1000) / 10;
-const catDelta = (d: Record<Category, number>): MoveCategoryDelta => Object.fromEntries(CATEGORIES.map((c) => [c, pct1(d[c])]));
-const side = (b: Score, a: Score, delta: number, cd: Record<Category, number>, empty: string[] = []): TradeSide => ({
-  before_week_win_pct: Math.round(b.weekWin * 100), after_week_win_pct: Math.round(a.weekWin * 100), delta_points: pct1(delta), categories_delta_points: catDelta(cd),
+const catDelta = (d: Record<string, number>): MoveCategoryDelta => Object.fromEntries(Object.keys(d).map((c) => [c, pct1(d[c]!)]));
+const side = (b: Score, a: Score, delta: number, cd: Record<string, number>, empty: string[] = [], pointsDelta?: number): TradeSide => ({
+  before_week_win_pct: Math.round(b.weekWin * 100), after_week_win_pct: Math.round(a.weekWin * 100), delta_points: pct1(delta),
+  ...(pointsDelta !== undefined ? { expected_week_points_delta: Math.round(pointsDelta * 10) / 10 } : { categories_delta_points: catDelta(cd) }),
   ...(empty.length ? { empty_slots: empty } : {}),
 });
 
@@ -841,8 +842,8 @@ export function tradeWith(input: AnalyzeInput, snapshot: Snapshot, st: MoveSetup
       mode: "search", ...base,
       offers: offers.map((o) => ({
         give: o.give.name, get: o.get.name,
-        you: side(o.mine.before, o.mine.after, o.mine.delta, o.mine.categoryDelta, o.mine.emptySlots),
-        other_team: side(o.theirs.before, o.theirs.after, o.theirs.delta, o.theirs.categoryDelta, o.theirs.emptySlots),
+        you: side(o.mine.before, o.mine.after, o.mine.delta, o.mine.categoryDelta, o.mine.emptySlots, o.mine.pointsDelta),
+        other_team: side(o.theirs.before, o.theirs.after, o.theirs.delta, o.theirs.categoryDelta, o.theirs.emptySlots, o.theirs.pointsDelta),
       })),
       assumptions: [...st.assumptions, ...slotNote, "Offers are one-for-one swaps that raise your weekly win chance without lowering the other team's. They model the two rosters only: what the other owner actually values, and positions, are not modelled."],
     };
@@ -855,10 +856,10 @@ export function tradeWith(input: AnalyzeInput, snapshot: Snapshot, st: MoveSetup
   const notMine = give.filter((p) => !myIds.has(p.id));
   if (notMine.length > 0) throw new Error(`you do not have: ${notMine.map((p) => p.name).join(", ")}`);
   const you = evaluateTrade(mine, give, get, env);
-  const out: TradeOutput = { mode: "evaluate", ...base, you: side(you.before, you.after, you.delta, you.categoryDelta, you.emptySlots), assumptions: [...st.assumptions, ...slotNote] };
+  const out: TradeOutput = { mode: "evaluate", ...base, you: side(you.before, you.after, you.delta, you.categoryDelta, you.emptySlots, you.pointsDelta), assumptions: [...st.assumptions, ...slotNote] };
   if (theirs.length > 0) {
     const them = evaluateTrade(theirs, get, give, env);
-    out.other_team = side(them.before, them.after, them.delta, them.categoryDelta, them.emptySlots);
+    out.other_team = side(them.before, them.after, them.delta, them.categoryDelta, them.emptySlots, them.pointsDelta);
   }
   return out;
 }

@@ -111,7 +111,7 @@ const engineFor = (codes: string[], weights?: Weights): ScoreEngine => ({
   codes,
   totals: (list, gamesOf, slots) => anyTotals(list.map((p) => ({ base: p.base!, games: gamesOf(p), value: p.value, positions: p.positions })), slots),
   simulate: (me, opps, o) => {
-    if (weights) return { weekWin: simulatePoints(me as AnyTotals, opps as AnyTotals[], weights, o).weekWin, categories: Object.fromEntries(codes.map((c) => [c, 0])) };
+    if (weights) { const p = simulatePoints(me as AnyTotals, opps as AnyTotals[], weights, o); return { weekWin: p.weekWin, categories: Object.fromEntries(codes.map((c) => [c, 0])), expectedPoints: p.expectedMe }; }
     const r = simulateAny(me as AnyTotals, opps as AnyTotals[], codes, o);
     return { weekWin: r.weekWin, categories: r.categories };
   },

@@ -50,7 +50,7 @@ echo '{"league":{"teams":14,"roster_spots":13},
 
 Look at the `trade` object:
 
-- `you`: `before_week_win_pct`, `after_week_win_pct`, `delta_points` (the change in your weekly win chance, in percentage points) and `categories_delta_points` (the change in each category's win chance). A `delta_points` under about 1 is not a meaningful change: say "no real change".
+- `you`: `before_week_win_pct`, `after_week_win_pct`, `delta_points` (the change in your weekly win chance, in percentage points) and `categories_delta_points` (the change in each category's win chance; for a custom category list these are the league's own categories). In a points league there are no categories: `categories_delta_points` is absent and `expected_week_points_delta` gives the change in your expected fantasy points for the week instead. A `delta_points` under about 1 is not a meaningful change: say "no real change".
 - `other_team`: the same for the other side, when their roster was given.
 - `offers` (search mode): one-for-one swaps that raise your weekly win chance without lowering theirs, best for the user first, each with both sides' numbers.
 - `games_source`: `schedule` means real game counts; `assumed` means an average week for everyone, so say the numbers are rougher.

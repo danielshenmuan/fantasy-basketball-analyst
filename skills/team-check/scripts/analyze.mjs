@@ -1416,8 +1416,10 @@ var engineFor = (codes, weights) => ({
   codes,
   totals: (list, gamesOf, slots) => anyTotals(list.map((p) => ({ base: p.base, games: gamesOf(p), value: p.value, positions: p.positions })), slots),
   simulate: (me, opps, o) => {
-    if (weights)
-      return { weekWin: simulatePoints(me, opps, weights, o).weekWin, categories: Object.fromEntries(codes.map((c) => [c, 0])) };
+    if (weights) {
+      const p = simulatePoints(me, opps, weights, o);
+      return { weekWin: p.weekWin, categories: Object.fromEntries(codes.map((c) => [c, 0])), expectedPoints: p.expectedMe };
+    }
     const r = simulateAny(me, opps, codes, o);
     return { weekWin: r.weekWin, categories: r.categories };
   }
@@ -1861,21 +1863,24 @@ var gamesIn = (w) => (e) => w.gamesOf ? w.gamesOf(e) : w.gamesFor(e.team);
 function scoreRoster(roster, env, simWeeks = env.simWeeks) {
   const pad = Math.max(0, env.slots - roster.length);
   const list = pad > 0 ? [...roster, ...Array(pad).fill(fillerOf(env))] : roster;
-  let week = 0;
+  let week = 0, pts;
   const codes = env.engine?.codes ?? [...CATEGORIES];
   const cats = Object.fromEntries(codes.map((c) => [c, 0]));
   for (const w of env.weeks) {
     const r = env.engine ? env.engine.simulate(env.engine.totals(list, gamesIn(w), lineupOf(env)), w.opponents, { weeks: simWeeks, seed: env.seed, slots: env.slots }) : simulateWeeks(weeklyTotals(list.map((p) => ({ averages: p.averages, games: gamesIn(w)(p), value: p.value, positions: p.positions })), lineupOf(env)), w.opponents, { weeks: simWeeks, seed: env.seed, slots: env.slots });
     week += r.weekWin;
+    if (r.expectedPoints !== undefined)
+      pts = (pts ?? 0) + r.expectedPoints;
     for (const c of codes)
       cats[c] += r.categories[c];
   }
   const n = env.weeks.length;
   for (const c of codes)
     cats[c] /= n;
-  return { weekWin: week / n, categories: cats };
+  return { weekWin: week / n, categories: cats, ...pts !== undefined ? { points: pts / n } : {} };
 }
 var diff = (a, b) => Object.fromEntries(Object.keys(a.categories).map((c) => [c, a.categories[c] - b.categories[c]]));
+var pointsDiff = (a, b) => a.points !== undefined && b.points !== undefined ? a.points - b.points : undefined;
 function entersLineup(roster, entry, env) {
   const pad = Math.max(0, env.slots - roster.length);
   const list = pad > 0 ? [...roster, ...Array(pad).fill(fillerOf(env))] : roster;
@@ -1962,7 +1967,7 @@ function evaluateTrade(roster, give, get, env) {
   const before = scoreRoster(roster, env);
   const next = roster.filter((p) => !giveIds.has(p.id)).concat(get);
   const after = scoreRoster(next, env);
-  return { before, after, delta: after.weekWin - before.weekWin, categoryDelta: diff(after, before), emptySlots: slotsBroken(roster, next, env) };
+  return { before, after, delta: after.weekWin - before.weekWin, categoryDelta: diff(after, before), ...pointsDiff(after, before) !== undefined ? { pointsDelta: pointsDiff(after, before) } : {}, emptySlots: slotsBroken(roster, next, env) };
 }
 function searchTrades(mine, theirs, env, opts = {}) {
   const quick = opts.quickWeeks ?? Math.min(env.simWeeks, 2000);
@@ -2532,12 +2537,12 @@ function resolveList(list, snapshot, estimated, names, suffix = "", ctx) {
   return out;
 }
 var pct1 = (x) => Math.round(x * 1000) / 10;
-var catDelta = (d) => Object.fromEntries(CATEGORIES.map((c) => [c, pct1(d[c])]));
-var side = (b, a, delta, cd, empty = []) => ({
+var catDelta = (d) => Object.fromEntries(Object.keys(d).map((c) => [c, pct1(d[c])]));
+var side = (b, a, delta, cd, empty = [], pointsDelta) => ({
   before_week_win_pct: Math.round(b.weekWin * 100),
   after_week_win_pct: Math.round(a.weekWin * 100),
   delta_points: pct1(delta),
-  categories_delta_points: catDelta(cd),
+  ...pointsDelta !== undefined ? { expected_week_points_delta: Math.round(pointsDelta * 10) / 10 } : { categories_delta_points: catDelta(cd) },
   ...empty.length ? { empty_slots: empty } : {}
 });
 function runWaiver(input, snapshot, reference, currentSeason, baseline) {
@@ -2699,8 +2704,8 @@ function tradeWith(input, snapshot, st) {
       offers: offers.map((o) => ({
         give: o.give.name,
         get: o.get.name,
-        you: side(o.mine.before, o.mine.after, o.mine.delta, o.mine.categoryDelta, o.mine.emptySlots),
-        other_team: side(o.theirs.before, o.theirs.after, o.theirs.delta, o.theirs.categoryDelta, o.theirs.emptySlots)
+        you: side(o.mine.before, o.mine.after, o.mine.delta, o.mine.categoryDelta, o.mine.emptySlots, o.mine.pointsDelta),
+        other_team: side(o.theirs.before, o.theirs.after, o.theirs.delta, o.theirs.categoryDelta, o.theirs.emptySlots, o.theirs.pointsDelta)
       })),
       assumptions: [...st.assumptions, ...slotNote, "Offers are one-for-one swaps that raise your weekly win chance without lowering the other team's. They model the two rosters only: what the other owner actually values, and positions, are not modelled."]
     };
@@ -2714,10 +2719,10 @@ function tradeWith(input, snapshot, st) {
   if (notMine.length > 0)
     throw new Error(`you do not have: ${notMine.map((p) => p.name).join(", ")}`);
   const you = evaluateTrade(mine, give, get, env);
-  const out = { mode: "evaluate", ...base, you: side(you.before, you.after, you.delta, you.categoryDelta, you.emptySlots), assumptions: [...st.assumptions, ...slotNote] };
+  const out = { mode: "evaluate", ...base, you: side(you.before, you.after, you.delta, you.categoryDelta, you.emptySlots, you.pointsDelta), assumptions: [...st.assumptions, ...slotNote] };
   if (theirs.length > 0) {
     const them = evaluateTrade(theirs, get, give, env);
-    out.other_team = side(them.before, them.after, them.delta, them.categoryDelta, them.emptySlots);
+    out.other_team = side(them.before, them.after, them.delta, them.categoryDelta, them.emptySlots, them.pointsDelta);
   }
   return out;
 }
