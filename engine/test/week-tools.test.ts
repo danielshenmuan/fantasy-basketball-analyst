@@ -168,6 +168,14 @@ describe("daily lineups and streaming (#5)", () => {
     expect(none.streaming!.moves.every((m) => !m.addable)).toBe(true);
     expect(none.notes.join(" ")).toContain("no adds left");
   });
+  test("streamers are only credited with days on or after as_of, with a full-week schedule and no banked stats (#32)", () => {
+    const o = analyze({ ...input({ stream: { candidates: strong.map((i) => ({ name: nm(i) })), adds_left: 1, top: 6 } }), as_of: day(2) }, snapshot).matchup!.daily!;
+    expect(o.streaming!.moves.length).toBeGreaterThan(0);
+    for (const m of o.streaming!.moves) {
+      expect(m.days_played.length).toBeGreaterThan(0);
+      expect(m.days_played.every((d) => d >= day(2))).toBe(true);
+    }
+  });
   test("a weekly lock refuses, and so does missing day-by-day data", () => {
     expect(() => analyze({ ...input({}), league: { ...league, lineup_lock: "weekly" } }, snapshot)).toThrow("locks lineups weekly");
     expect(() => analyze(input({}), { ...snapshot, schedule: { source: "t", weeks: [{ start: "2026-11-23", games: { BOS: 3 } }] } })).toThrow("day-by-day");

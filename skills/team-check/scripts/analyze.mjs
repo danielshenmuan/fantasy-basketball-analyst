@@ -1074,6 +1074,7 @@ function runDaily(input, snapshot, m, a) {
     if (!Array.isArray(s.candidates) || s.candidates.length === 0)
       throw new Error("daily.stream.candidates must list at least one available player");
     const ref = starts.size === 0 && benches.size === 0 ? baseEval.win : evaluate(base, a.weeks, fullGames).win;
+    const firstAdd = a.asOf > days[0] ? a.asOf : days[0];
     const quick = Math.min(a.weeks, 2500);
     const drops = [...base.filter((r) => r.active), ...s.open_spot ? [null] : []];
     const found = [];
@@ -1087,7 +1088,7 @@ function runDaily(input, snapshot, m, a) {
       if (!e || base.some((r) => r.entry.id === e.id))
         continue;
       const w = gameWeights(snapshot, e.team, a.weekStart, a.gamesFor(e.team), undefined);
-      const row = { entry: e, positions: parsePositions(c.positions), dates: new Map(w.games.filter((g) => g.date >= days[0]).map((g) => [g.date, 1])), active: true };
+      const row = { entry: e, positions: parsePositions(c.positions), dates: new Map(w.games.filter((g) => g.date >= firstAdd).map((g) => [g.date, 1])), active: true };
       if (row.dates.size === 0)
         continue;
       let best = null;
