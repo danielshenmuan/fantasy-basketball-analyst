@@ -37,7 +37,7 @@ Mid-week, read the live score from the matchup page (or ESPN's `scoreByStat`, se
 
 1. Get games left with the helper, from the first day not yet counted in the banked stats through Sunday (today, if today's games have not started and the page does not show them):
    `node skills/matchup/scripts/games-left.mjs 2026-11-24 2026-11-29`  (prints `{"games":{"ATL":2,...}}`, team codes as in the data file; reads the public NBA scoreboard).
-2. Add `so_far` inside `matchup` (needs a real opponent): made/attempted shots, not percentages, for both sides, plus that `games`:
+2. Add `so_far` inside `matchup` (needs a real opponent): both sides' banked stats, plus that `games`. Give made/attempted shots when the host shows them (exact):
 
 ```json
 "so_far":{"games_left":{"ATL":2,"BKN":3},
@@ -47,7 +47,17 @@ Mid-week, read the live score from the matchup page (or ESPN's `scoreByStat`, se
 
 If the helper cannot run, use `"remaining_share"` instead of `games_left` (the page's games remaining divided by total, e.g. 34 of 43 = 0.79): rougher, because it gives every player the same share. Games in progress are in neither the banked stats nor the games left; say so.
 
-Check `matchup.so_far_counted` is true and say the live score was counted. A player who returns mid-week is handled with a scenario (below); the engine does not guess it.
+**What the host shows decides the route, and the result always says which one it used (`matchup.live_score`):**
+
+- **`exact`**: you gave `fgm`, `fga`, `ftm`, `fta` for both sides (ESPN's matchup page and box score usually show made/attempted; read them). Nothing is guessed.
+- **`estimated`**: the host shows only percentages (Yahoo's matchup page shows FG% and FT%, not made/attempted). Give `"fg_pct"` and `"ft_pct"` instead of the four counts (0.47 or 47), with the other banked stats as usual:
+  `"you":{"pts":154,"reb":40,"ast":36,"stl":2,"blk":7,"fg3m":22,"tov":14,"fg_pct":0.421,"ft_pct":0.973}`
+  The engine estimates each side's banked attempts as the sum over the counted players of per-game attempts x games already played, and turns them into made shots with your percentage. Say plainly that the live score is **estimated** and quote the error from the assumptions: measured on 2025-26 weeks, banked field-goal attempts come out about 16% too high and free-throw attempts about 28% too high (typical miss 15% and 24%), which moves the week's final FG% by typically under 0.1 points and FT% by about 0.2 (9 weeks in 10 within 0.4 and 1.0 points). The score is small; do not present the live score as exact. A side can mix: counts for one shot type, a percentage for the other.
+- **`fresh-week`**: neither counts nor percentages (or other banked stats) were usable, so the engine ignores `so_far` and simulates the whole week from 0-0. Say so first, and that what is already banked is not in the number. Ask the user for the percentages before settling for it.
+
+In a league with custom categories, Points and made-shot categories are counted from made shots, so on the `estimated` route they are rougher than the other banked stats; the assumptions say so.
+
+Check `matchup.so_far_counted` is true (it is false on `fresh-week`) and say the live score was counted, and whether exact or estimated. A player who returns mid-week is handled with a scenario (below); the engine does not guess it.
 
 ## Your lineup, scenarios and daily lineups
 
@@ -103,7 +113,7 @@ Look at the `matchup` object:
 When `league.categories` is not the standard nine, the result has `custom_categories: true` and these differences apply:
 - `matchup.week_win_pct`, `week_tie_pct` and `week_loss_pct` are reported separately. Say all three; a tie is not a win.
 - `matchup.categories` is keyed by the league's own category codes.
-- A week already under way needs `so_far` with `you` and `opponent` in base stats: made and attempted shots (`fgm`, `fga`, `ftm`, `fta`, `fg3m`, `fg3a`), `oreb`, `dreb`, `ast`, `stl`, `blk`, `turnovers`, `pf`, `minutes`, `dd`, `td`. Percentages and ratios are rebuilt from those, so read the made and attempted numbers, not the displayed percentage. Only the stats this league's categories use are required. The script names any that are missing.
+- A week already under way needs `so_far` with `you` and `opponent` in base stats: made and attempted shots (`fgm`, `fga`, `ftm`, `fta`, `fg3m`, `fg3a`), `oreb`, `dreb`, `ast`, `stl`, `blk`, `turnovers`, `pf`, `minutes`, `dd`, `td`. Percentages and ratios are rebuilt from those, so read the made and attempted numbers when the page shows them. If it shows only FG% and FT% (Yahoo), give `fg_pct` and `ft_pct` for the sides instead: the live score is then labelled estimated (see above). Only the stats this league's categories use are required. The script names any that are missing.
 - If the script says the data file has no stat yet (for example `dd_rate`), report that plainly; the nightly update adds it.
 
 

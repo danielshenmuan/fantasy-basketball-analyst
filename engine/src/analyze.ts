@@ -17,6 +17,7 @@ import { availabilityFromHost, DEFAULT_RAMP, gamesWithAvailability } from "./ava
 import { runDaily, type DailyEngine } from "./daily";
 import { runOutlook, type OutlookOutput, type WeekWin } from "./outlook";
 import { resolveSide, type SideResult } from "./sideutil";
+import { ATTEMPTS_ESTIMATE_NOTE, FRESH_WEEK_NOTE, bankedShooting, liveScoreOf, type LiveScore } from "./banked";
 
 /** A player as the user or the host lists him. */
 export interface PlayerRef {
@@ -206,7 +207,10 @@ export interface MatchupInput {
 /** Stats already in the books this week. Made and attempted shots, not percentages. */
 export interface BankedStats {
   pts: number; reb: number; ast: number; stl: number; blk: number; fg3m: number; tov: number;
-  fgm: number; fga: number; ftm: number; fta: number;
+  /** Made and attempted shots, when the host shows them: the live score is then exact. */
+  fgm?: number; fga?: number; ftm?: number; fta?: number;
+  /** Only FG% / FT% (0 to 1, or 0 to 100), when the host shows no counts (Yahoo): banked attempts are then estimated and the output says so. */
+  fg_pct?: number; ft_pct?: number;
 }
 export interface MatchupOutput {
   week_start: string | null;
@@ -219,6 +223,8 @@ export interface MatchupOutput {
   weeks: number;
   /** True when the stats already banked this week were counted (`so_far`). */
   so_far_counted: boolean;
+  /** How the live score was built: "exact" (made and attempted counts given), "estimated" (only FG% / FT% given: attempts estimated) or "fresh-week" (no usable live score: the whole week is simulated from 0-0). */
+  live_score: import("./banked").LiveScore;
   /** Whole percent of simulated weeks you win each category. */
   categories: Record<Category, number>;
   /** Whole percent of simulated weeks you win 5 or more of 9. */
@@ -450,18 +456,24 @@ function runMatchup(
   const { slots, slotList } = lineupSetting(input, m.lineup_slots, "matchup.lineup_slots");
   const lineupSlots: Slots = slotList ?? slots;
   const assumptions: string[] = [];
-  const sf = m.so_far;
-  if (sf) {
+  const sfIn = m.so_far;
+  if (sfIn) {
     if (!m.opponent || m.opponent.length === 0) throw new Error("matchup.so_far needs a real matchup.opponent");
-    if (sf.games_left) {
-      for (const [t, n] of Object.entries(sf.games_left))
+    if (sfIn.games_left) {
+      for (const [t, n] of Object.entries(sfIn.games_left))
         if (!(Number.isInteger(n) && n >= 0 && n <= 7)) throw new Error(`matchup.so_far.games_left: ${t} must be a whole number of games from 0 to 7`);
-    } else if (!(sf.remaining_share! >= 0 && sf.remaining_share! <= 1))
+    } else if (!(sfIn.remaining_share! >= 0 && sfIn.remaining_share! <= 1))
       throw new Error("matchup.so_far needs games_left, or remaining_share between 0 and 1");
-    for (const side of [sf.you, sf.opponent])
+    for (const side of [sfIn.you, sfIn.opponent])
       for (const k of ["pts", "reb", "ast", "stl", "blk", "fg3m", "tov", "fgm", "fga", "ftm", "fta"] as const)
-        if (!(typeof side?.[k] === "number" && side[k] >= 0)) throw new Error(`matchup.so_far: ${k} must be a number of 0 or more for both sides`);
+        if (side?.[k] !== undefined && !(typeof side[k] === "number" && side[k]! >= 0)) throw new Error(`matchup.so_far: ${k} must be a number of 0 or more for both sides`);
   }
+  // The live score: exact (counts), estimated (only FG% / FT%) or fresh-week (not usable: the whole week is simulated from 0-0).
+  const countKeys = ["pts", "reb", "ast", "stl", "blk", "fg3m", "tov"] as const;
+  const usable = Boolean(sfIn) && (["you", "opponent"] as const).every((w) => countKeys.every((k) => typeof sfIn![w]?.[k] === "number"));
+  const liveScore: LiveScore = sfIn && usable ? liveScoreOf([sfIn.you, sfIn.opponent], { fg: true, ft: true }) : "fresh-week";
+  const sf = liveScore === "fresh-week" ? undefined : sfIn;
+  if (sfIn && !sf) assumptions.push(FRESH_WEEK_NOTE);
 
   // Games per team this week, from the schedule in the snapshot.
   const weekStart = m.week_start ?? mondayOf(snapshot.generated_at);
@@ -485,16 +497,22 @@ function runMatchup(
     scenarios: m.scenarios ?? [], slots: lineupSlots, ...(sf?.games_left ? { leftFor } : {}), assumptions,
   };
   const toWeekly = (s: SideResult) => s.chosen.map((x) => ({ averages: x.entry.averages, games: x.games, value: x.entry.value, positions: x.positions }));
-  const weeklyOf = (list: PlayerRef[], label: string, side: "you" | "opponent"): { totals: WeeklyTotals; remaining: WeeklyTotals; share: number; names: NameResult[]; rows: PlayerGames[]; res: SideResult } => {
+  const weeklyOf = (list: PlayerRef[], label: string, side: "you" | "opponent"): { totals: WeeklyTotals; remaining: WeeklyTotals; share: number; names: NameResult[]; rows: PlayerGames[]; res: SideResult; banked?: BankedStats } => {
     const res = resolveSide(list, label, side, { ...ctx, ...(side === "you" && m.lineup ? { lineup: m.lineup } : {}) });
     const players = toWeekly(res);
     const totals = weeklyTotals(players, lineupSlots);
     if (!sf) return { totals, remaining: totals, share: 1, names: res.names, rows: res.playerRows, res };
-    if (!sf.games_left) return { totals, remaining: scaledTotals(totals, sf.remaining_share!), share: sf.remaining_share!, names: res.names, rows: res.playerRows, res };
+    const given = side === "you" ? sf.you : sf.opponent;
+    const bankedOf = (playedGames: (x: SideResult["chosen"][number]) => number): BankedStats => {
+      const pl = weeklyTotals(res.chosen.map((x, i) => ({ ...players[i]!, games: playedGames(x) })), lineupSlots);
+      const { fg_pct: _a, ft_pct: _b, ...rest } = given;
+      return { ...rest, ...bankedShooting(given, pl) } as BankedStats;
+    };
+    if (!sf.games_left) return { totals, remaining: scaledTotals(totals, sf.remaining_share!), share: sf.remaining_share!, names: res.names, rows: res.playerRows, res, banked: bankedOf((x) => x.games * (1 - sf.remaining_share!)) };
     // Each player's remaining games are his own team games left. The lineup is the one that counts, as in weeklyTotals.
     const left = res.chosen.map((x, i) => ({ ...players[i]!, games: x.left }));
     const full = res.chosen.reduce((s, x) => s + x.games, 0), rest = res.chosen.reduce((s, x) => s + x.left, 0);
-    return { totals, remaining: weeklyTotals(left, lineupSlots), share: full > 0 ? Math.min(1, rest / full) : 1, names: res.names, rows: res.playerRows, res };
+    return { totals, remaining: weeklyTotals(left, lineupSlots), share: full > 0 ? Math.min(1, rest / full) : 1, names: res.names, rows: res.playerRows, res, banked: bankedOf((x) => Math.max(0, x.games - x.left)) };
   };
 
   const me = weeklyOf(input.roster, "your", "you");
@@ -513,7 +531,7 @@ function runMatchup(
     );
   }
   const weeks = m.weeks ?? DEFAULT_WEEKS;
-  const progressOf = (a: typeof me) => ({ me: { banked: sf!.you, remaining: a.remaining, share: a.share }, opponent: { banked: sf!.opponent, remaining: opp!.remaining, share: opp!.share } });
+  const progressOf = (a: typeof me) => ({ me: { banked: a.banked!, remaining: a.remaining, share: a.share }, opponent: { banked: opp!.banked!, remaining: opp!.remaining, share: opp!.share } });
   const r = simulateWeeks(me.totals, opponents, {
     weeks, seed: input.seed ?? 1, slots,
     ...(sf && opp ? { progress: progressOf(me) } : {}),
@@ -540,12 +558,13 @@ function runMatchup(
         ? `The week is under way: stats already banked are kept, and the games still to play (your lineup has ${Math.round(me.share * 100)}% of its week left, theirs ${Math.round(opp!.share * 100)}%) are simulated from each player's own team games left, per-game averages and luck. Games in progress or already counted by the league site must not be in the games left.`
         : `The week is under way: stats already banked are kept, and the remaining ${Math.round(sf.remaining_share! * 100)}% of each team's games are simulated from per-game averages plus luck. Every player is assumed to have that same share of his week left, which is rough when a team's games are lopsided.`,
     );
+  if (liveScore === "estimated") assumptions.push(`LIVE SCORE ESTIMATED: ${ATTEMPTS_ESTIMATE_NOTE}`);
   const availabilityApplied = [...me.res.rows, ...(opp?.res.rows ?? [])].some((x) => x.lost > 0 || x.av);
   if (availabilityApplied)
     assumptions.push("Some players' games were changed by an injury status read from the league page or by a scenario you gave. Scenarios and a return day are your assumptions, not measured facts; a ramp-up after a return (default 80% output for 3 games) is also an assumption.");
   let daily: MatchupOutput["daily"];
   if (m.daily) {
-    if (m.daily.from && m.daily.from > weekStart && !sf) throw new Error("matchup.daily.from is later than the week's start: give matchup.so_far with the stats already banked");
+    if (m.daily.from && m.daily.from > weekStart && !sf) throw new Error("matchup.daily.from is later than the week's start: give matchup.so_far with the stats already banked (counts, or at least FG% and FT%)");
     const zero = (): WeeklyTotals => ({ pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, fg3m: 0, tov: 0, fgm: 0, fga: 0, ftm: 0, fta: 0 });
     const engine: DailyEngine<WeeklyTotals> = {
       empty: zero,
@@ -553,7 +572,7 @@ function runMatchup(
       dayTotals: (ps) => weeklyTotals(ps.map((p) => ({ averages: p.entry.averages, games: p.weight, value: p.entry.value, positions: p.positions })), lineupSlots),
       win: (remaining, share, n) => simulateWeeks(sf ? me.totals : remaining, opponents, {
         weeks: n, seed: input.seed ?? 1, slots,
-        ...(sf && opp ? { progress: { me: { banked: sf.you, remaining, share }, opponent: { banked: sf.opponent, remaining: opp.remaining, share: opp.share } } } : {}),
+        ...(sf && opp ? { progress: { me: { banked: me.banked!, remaining, share }, opponent: { banked: opp.banked!, remaining: opp.remaining, share: opp.share } } } : {}),
       }).weekWin,
     };
     daily = runDaily(input, snapshot, m, { me: me.res, weekStart, lineupSlots, weeks, engine, estimated, gamesFor, asOf: ctx.asOf, hasBanked: Boolean(sf), assumptions });
@@ -571,6 +590,7 @@ function runMatchup(
     lineup_slots: slots,
     weeks,
     so_far_counted: Boolean(sf),
+    live_score: liveScore,
     categories: Object.fromEntries(CATEGORIES.map((c) => [c, pct(r.categories[c])])) as Record<Category, number>,
     week_win_pct: pct(r.weekWin),
     distribution_pct: r.distribution.map(pct),

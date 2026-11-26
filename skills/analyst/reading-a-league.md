@@ -35,7 +35,7 @@ Ask for the league name or URL only if the card does not give the id. With the u
 
 - **Settings:** `/nba/<league-id>/settings`. Scoring type, the category list (copy names exactly), roster positions (starters, bench, IL), weekly add limit, waiver type, trade deadline, playoffs, tie-break. A points league lists a stat weight for each stat.
 - **Your roster:** `/nba/<league-id>/<your-team-id>`. The league home page links to your team. IL players are in the IL slots.
-- **This week's matchup and opponent:** `/nba/<league-id>/matchup`. It names the opponent and shows each category side by side with the stats banked so far. For percentage categories read the made and attempted numbers (for example 48/114) when the page shows them; a bare percentage cannot be turned back into made and attempted.
+- **This week's matchup and opponent:** `/nba/<league-id>/matchup`. It names the opponent and shows each category side by side with the stats banked so far. For percentage categories read the made and attempted numbers (for example 48/114) when the page shows them; Yahoo's matchup page shows only FG% and FT%: read those and pass them as `fg_pct` and `ft_pct`; the matchup then labels the live score estimated and gives the measured error (see the matchup skill).
 - **Opponent roster:** the opponent's team link on the matchup page, `/nba/<league-id>/<opponent-team-id>`.
 - **Free agents:** `/nba/<league-id>/players` with the status filter on **Available** and the list sorted by percent rostered (or rank). Read the first page or two; stop at 60 names. Note which sort you used.
 - **Trade partner roster:** any team's page, the same way.
@@ -98,7 +98,7 @@ Percentages and a few others (field goal %, free throw %, 3-point %, minutes, as
 **This week's opponent and banked stats (`view=mMatchup&view=mMatchupScore`)**
 - `schedule[]` holds every matchup. Take the entries with `matchupPeriodId === status.currentMatchupPeriod` where `home.teamId` or `away.teamId` is the user's team id. The other side is the opponent; fetch its roster from `view=mRoster`.
 - Banked stats: `home.cumulativeScore.scoreByStat` and `away.cumulativeScore.scoreByStat`, keyed by statId (use the table above), each `{score, result}`. In a points league `home.totalPoints` and `away.totalPoints` are the banked points.
-- `scoreByStat` holds the scored categories only, and for a percentage category it holds the percentage. The engine needs made and attempted numbers for percentages (`fgm`, `fga`, `ftm`, `fta`): when the response does not give them, read them from the league's matchup page text, or from `view=mBoxscore` if it carries them for the week, and if neither does, say the live score cannot be counted exactly and run without `so_far` percentages rather than approximating.
+- `scoreByStat` holds the scored categories only, and for a percentage category it holds the percentage. The engine needs made and attempted numbers for percentages (`fgm`, `fga`, `ftm`, `fta`): when the response does not give them, read them from the league's matchup page text, or from `view=mBoxscore` if it carries them for the week, and if neither does, pass the percentages as `fg_pct` and `ft_pct`: the result is labelled `estimated`, with the measured error. If even the percentages are missing the result is `fresh-week` (the whole week from 0-0); say so.
 - For a future week use that week's `matchupPeriodId` and set `week_start` to its Monday.
 
 **Free agents (`view=kona_player_info`)**
