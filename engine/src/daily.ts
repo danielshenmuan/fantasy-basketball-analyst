@@ -42,6 +42,21 @@ export interface DailyOutput {
     adds_left?: number;
     moves: { add: string; drop: string | null; days_played: string[]; week_win_pct: number; delta_points: number; addable: boolean }[];
   };
+  /**
+   * Why this number can differ from the weekly `week_win_pct` (issue #33). Additive and measured; no other number depends on it.
+   * The weekly model sums each lineup player's games over the week; the daily model fields the best lineup every day, so a
+   * bench player starts on days when a starter has no game. When the opponent is a real roster, `opponent_daily_week_win_pct`
+   * gives him the same day-by-day fielding (the headline daily number does not: it keeps his weekly total).
+   */
+  compare_with_weekly: {
+    weekly_week_win_pct: number;
+    daily_week_win_pct: number;
+    /** Games in the days modelled: the weekly model's lineup vs the best lineup each day. */
+    your_games: { weekly_lineup: number; daily_lineup: number; from_bench: number };
+    opponent_games?: { weekly_lineup: number; daily_lineup: number; from_bench: number };
+    /** Win chance when the opponent also fields the best lineup each day (real opponent roster only). */
+    opponent_daily_week_win_pct?: number;
+  };
   notes: string[];
 }
 
@@ -54,7 +69,7 @@ export interface DailyEngine<T> {
   /** One day's lineup (already chosen) summed into totals. */
   dayTotals(players: DayPlayer[]): T;
   /** Weekly win chance with `remaining` still to play, `share` of the lineup's week left. */
-  win(remaining: T, share: number, weeks: number): number;
+  win(remaining: T, share: number, weeks: number, opponent?: { remaining: T; share: number }): number;
 }
 
 interface Row { entry: Entry; positions?: string[]; dates: Map<string, number>; active: boolean }
@@ -65,6 +80,10 @@ export function runDaily<T>(
   a: {
     me: SideResult; weekStart: string; lineupSlots: Slots; weeks: number; engine: DailyEngine<T>; estimated: Map<number, Entry>;
     gamesFor: (team?: string) => number; asOf: string; hasBanked: boolean; assumptions: string[];
+    /** The real opponent's roster, when there is one. */
+    opp?: SideResult;
+    /** The weekly model's week win chance for the same inputs (0 to 1). */
+    weeklyWin: number;
   },
 ): DailyOutput {
   const d = m.daily!;
@@ -98,15 +117,19 @@ export function runDaily<T>(
       .map((r) => ({ r, value: r.entry.value + (starts.get(r.entry.id)?.has(day) ? BIG : 0), positions: r.positions, games: r.dates.get(day)! }));
     return assignLineup(avail, a.lineupSlots);
   };
-  const evaluate = (rows: Row[], weeks: number, fullGames: number) => {
+  const dayLineups = (rows: Row[]) => {
     let tot = a.engine.empty(), games = 0;
     for (const day of days) {
       const picks = pickDay(rows, day);
       tot = a.engine.plus(tot, a.engine.dayTotals(picks.map((p) => ({ entry: p.player.r.entry, weight: p.player.r.dates.get(day)!, positions: p.player.r.positions, name: p.player.r.entry.name }))));
       games += picks.reduce((s, p) => s + p.player.r.dates.get(day)!, 0);
     }
+    return { tot, games };
+  };
+  const evaluate = (rows: Row[], weeks: number, fullGames: number, opponent?: { remaining: T; share: number }) => {
+    const { tot, games } = dayLineups(rows);
     const share = fullGames > 0 ? Math.min(1, games / fullGames) : 1;
-    return { win: a.engine.win(tot, share, weeks), share, games };
+    return { win: a.engine.win(tot, share, weeks, opponent), share, games };
   };
   // Games the lineup plays over the whole week (the denominator of the share left).
   const fullGames = (() => {
@@ -126,7 +149,7 @@ export function runDaily<T>(
   });
   const out: DailyOutput = {
     from: days[0]!, days, baseline_week_win_pct: Math.round(baseEval.win * 100), share_left: Math.round(baseEval.share * 100) / 100,
-    rough: baseEval.share < 1 / 3, lineup_by_day, notes,
+    rough: baseEval.share < 1 / 3, lineup_by_day, notes, compare_with_weekly: undefined as never,
   };
   if (out.rough) notes.push("Less than a third of the lineup's games are left. Luck was measured on whole weeks and scaled down for the part left, so these numbers are rougher.");
 
@@ -141,6 +164,35 @@ export function runDaily<T>(
     out.baseline_week_win_pct = Math.round(plain * 100);
     notes.push("baseline_week_win_pct is the best lineup each day with no forced starts or benches; the change shown is what your starts and benches do to it.");
     // With forced changes in place, lineup_by_day shows the lineup with them applied.
+  }
+
+  {
+    // Explain the gap to the weekly number (issue #33), always on the plain roster: no forced starts or benches, no streamer.
+    const savedS = new Map(starts), savedB = new Map(benches);
+    starts.clear(); benches.clear();
+    const gamesIn = (rs: Row[]) => rs.reduce((t, r) => t + days.reduce((u, x) => u + (r.dates.get(x) ?? 0), 0), 0);
+    const round1 = (x: number) => Math.round(x * 10) / 10;
+    const games = (chosen: SideRow[], rows: Row[]) => {
+      const weekly = gamesIn(chosen.map((c) => rows.find((r) => r.entry.id === c.entry.id)!).filter((r) => r.active));
+      const daily = dayLineups(rows).games;
+      return { weekly_lineup: round1(weekly), daily_lineup: round1(daily), from_bench: round1(daily - weekly) };
+    };
+    const plain = evaluate(base, a.weeks, fullGames).win;
+    const cmp: DailyOutput["compare_with_weekly"] = {
+      weekly_week_win_pct: Math.round(a.weeklyWin * 100), daily_week_win_pct: Math.round(plain * 100),
+      your_games: games(a.me.chosen, base),
+    };
+    if (a.opp) {
+      const orows = a.opp.rows.map(toRow);
+      cmp.opponent_games = games(a.opp.chosen, orows);
+      const od = dayLineups(orows);
+      const ofull = (() => { let g = 0; for (let x = a.weekStart; x <= weekEnd; x = addDays(x, 1)) g += pickDay(orows, x).reduce((u, p) => u + p.player.r.dates.get(x)!, 0); return g; })();
+      cmp.opponent_daily_week_win_pct = Math.round(evaluate(base, a.weeks, fullGames, { remaining: od.tot, share: ofull > 0 ? Math.min(1, od.games / ofull) : 1 }).win * 100);
+    }
+    for (const [k, v] of savedS) starts.set(k, v);
+    for (const [k, v] of savedB) benches.set(k, v);
+    out.compare_with_weekly = cmp;
+    notes.push(`The weekly matchup number counts each lineup player's games all week; the daily number fields the best lineup every day, so bench players start on days when starters have no game (you: ${cmp.your_games.from_bench >= 0 ? "+" : ""}${cmp.your_games.from_bench} games${cmp.opponent_games ? `, opponent: ${cmp.opponent_games.from_bench >= 0 ? "+" : ""}${cmp.opponent_games.from_bench} games` : ""}). The headline daily number gives only your side this day-by-day fielding${a.opp ? `; with the opponent fielding his best lineup each day too it is ${cmp.opponent_daily_week_win_pct}%` : ""}. See compare_with_weekly.`);
   }
 
   if (d.stream) {

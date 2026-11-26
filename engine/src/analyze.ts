@@ -573,12 +573,12 @@ function runMatchup(
       empty: zero,
       plus: (x, y) => { const o = zero(); for (const k of Object.keys(o) as (keyof WeeklyTotals)[]) o[k] = x[k] + y[k]; return o; },
       dayTotals: (ps) => weeklyTotals(ps.map((p) => ({ averages: p.entry.averages, games: p.weight, value: p.entry.value, positions: p.positions })), lineupSlots),
-      win: (remaining, share, n) => simulateWeeks(sf ? me.totals : remaining, opponents, {
+      win: (remaining, share, n, od) => simulateWeeks(sf ? me.totals : remaining, od && !sf ? [od.remaining] : opponents, {
         weeks: n, seed: input.seed ?? 1, slots,
-        ...(sf && opp ? { progress: { me: { banked: me.banked!, remaining, share }, opponent: { banked: opp.banked!, remaining: opp.remaining, share: opp.share } } } : {}),
+        ...(sf && opp ? { progress: { me: { banked: me.banked!, remaining, share }, opponent: { banked: opp.banked!, remaining: od ? od.remaining : opp.remaining, share: od ? od.share : opp.share } } } : {}),
       }).weekWin,
     };
-    daily = runDaily(input, snapshot, m, { me: me.res, weekStart, lineupSlots, weeks, engine, estimated, gamesFor, asOf: ctx.asOf, hasBanked: Boolean(sf), assumptions });
+    daily = runDaily(input, snapshot, m, { me: me.res, weekStart, lineupSlots, weeks, engine, estimated, gamesFor, asOf: ctx.asOf, hasBanked: Boolean(sf), assumptions, ...(opp ? { opp: opp.res } : {}), weeklyWin: r.weekWin });
   }
   assumptions.push(
     `Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed, so the same inputs give the same answer. ` +

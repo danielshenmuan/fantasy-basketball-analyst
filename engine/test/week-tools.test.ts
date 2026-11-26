@@ -176,6 +176,26 @@ describe("daily lineups and streaming (#5)", () => {
       expect(m.days_played.every((d) => d >= day(2))).toBe(true);
     }
   });
+  test("compare_with_weekly explains the gap to the weekly number without changing any number (#33)", () => {
+    const opp = strong.map((i) => ({ name: nm(i) })).concat(weak.slice(0, 7).map((i) => ({ name: nm(i) })));
+    const withCmp = analyze(input({}, { matchup: { weeks: 1500, lineup_slots: 5, opponent: opp, daily: {} } }), snapshot).matchup!;
+    const d = withCmp.daily!, c = d.compare_with_weekly;
+    expect(c.weekly_week_win_pct).toBe(withCmp.week_win_pct);
+    expect(c.daily_week_win_pct).toBe(d.baseline_week_win_pct);
+    // 13 players, 5 slots: on days when a starter has no game the bench plays, so the daily lineup has at least the weekly games
+    expect(c.your_games.from_bench).toBeGreaterThan(0);
+    expect(c.your_games.daily_lineup).toBeCloseTo(c.your_games.weekly_lineup + c.your_games.from_bench, 1);
+    expect(c.opponent_games!.from_bench).toBeGreaterThanOrEqual(0);
+    expect(c.opponent_daily_week_win_pct).toBeGreaterThanOrEqual(0);
+    expect(d.notes.join(" ")).toContain("compare_with_weekly");
+    // the weekly numbers are the same with or without the daily section
+    const plain = analyze(input({}, { matchup: { weeks: 1500, lineup_slots: 5, opponent: opp } }), snapshot).matchup!;
+    expect(plain.week_win_pct).toBe(withCmp.week_win_pct);
+    // no real opponent: only your side is explained
+    const typical = analyze(input({}), snapshot).matchup!.daily!.compare_with_weekly;
+    expect(typical.opponent_games).toBeUndefined();
+    expect(typical.opponent_daily_week_win_pct).toBeUndefined();
+  });
   test("a weekly lock refuses, and so does missing day-by-day data", () => {
     expect(() => analyze({ ...input({}), league: { ...league, lineup_lock: "weekly" } }, snapshot)).toThrow("locks lineups weekly");
     expect(() => analyze(input({}), { ...snapshot, schedule: { source: "t", weeks: [{ start: "2026-11-23", games: { BOS: 3 } }] } })).toThrow("day-by-day");

@@ -368,7 +368,7 @@ function runAnyMatchup(
       dayTotals: (ps) => anyTotals(ps.map((p) => ({ base: p.entry.base!, games: p.weight, value: p.entry.value, positions: p.positions })), lineupSlots),
       win: (remaining, share, n) => simulate(sf ? me.totals : remaining, remaining, share, n).weekWin,
     };
-    daily = runDaily(input, snapshot, m, { me: me.res, weekStart, lineupSlots, weeks, engine, estimated, gamesFor, asOf: ctx.asOf, hasBanked: Boolean(sf), assumptions });
+    daily = runDaily(input, snapshot, m, { me: me.res, weekStart, lineupSlots, weeks, engine, estimated, gamesFor, asOf: ctx.asOf, hasBanked: Boolean(sf), assumptions, weeklyWin: r.weekWin });
   }
   assumptions.push(`Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed. The simulation does not model ${availabilityApplied ? "other injuries, " : "injuries, "}lineup moves or streaming during the week${daily ? " except in the daily section" : ""}. ${weights ? "The side with more fantasy points wins; equal points are a tie." : "A week is won with more categories than the opponent; equal counts are a tie."}`);
   const pct = (x: number) => Math.round(x * 100);
