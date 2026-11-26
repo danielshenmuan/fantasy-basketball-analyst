@@ -22,6 +22,10 @@ Read your roster and the other team's roster in one pass without asking for past
 
 **Before running anything, show the roster(s), the players in the trade and the league settings, and ask the user to confirm.**
 
+## Positions
+
+With `league.slots` (and `positions` on every player of both rosters and on the players you give and get) a trade that would leave a required lineup slot with nobody eligible is flagged with `empty_slots` and is never offered in a search. Without positions the output says the check is off.
+
 ## Run the analysis
 
 **Evaluate a trade** (any number of players each way):

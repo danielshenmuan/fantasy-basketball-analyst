@@ -13,3 +13,7 @@ export { simulateWeeks, typicalOpponents, weeklyTotals, mondayOf, WEEKLY_LUCK, W
 export { resolvePlayer, nameTokens, historyOf, scheduleWeeks, gamesBetween, gameDays, type Snapshot, type SnapshotPlayer, type NameMatch } from "./snapshot";
 export { analyzeAny, type AnyAnalyzeOutput, type AnyMatchupOutput, type AnyBanked } from "./analyzeAny";
 export { parseCategories, isStandardNine, SUPPORTED_CATEGORIES } from "./anycat";
+export { assignLineup, pickLineup, unfilledSlots, parsePositions, parseSlots, slotCount, eligible, ANY_POSITION, type Slots } from "./lineup";
+export { gamesWithAvailability, gameWeights, availabilityFromHost, DEFAULT_RAMP, type Availability } from "./availability";
+export type { PlayerRef, Scenario } from "./analyze";
+export type { DailyInput, DailyOutput } from "./daily";

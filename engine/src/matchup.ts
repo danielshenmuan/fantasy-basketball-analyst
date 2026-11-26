@@ -1,4 +1,5 @@
 import { DEFAULT_PICK_WEIGHTS, mulberry32, pickIndex } from "./simulate";
+import { pickLineup, slotCount, type Slots } from "./lineup";
 import type { Category, SeasonAverages } from "./types";
 
 /**
@@ -62,11 +63,13 @@ export interface WeeklyPlayer {
   games: number;
   /** Ranking value (sum of category scores): the best `slots` by value fill the lineup. */
   value: number;
+  /** Eligible positions (PG SG SF PF C), used only when the lineup is a list of slots. */
+  positions?: string[];
 }
 
 /** Sum of the best `slots` players by value, each at per-game average x games. Made shots fall back to attempts x percentage. */
-export function weeklyTotals(players: WeeklyPlayer[], slots: number): WeeklyTotals {
-  const lineup = [...players].sort((a, b) => b.value - a.value).slice(0, slots);
+export function weeklyTotals(players: WeeklyPlayer[], slots: Slots): WeeklyTotals {
+  const lineup = pickLineup(players, slots);
   const t: WeeklyTotals = { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, fg3m: 0, tov: 0, fgm: 0, fga: 0, ftm: 0, fta: 0 };
   for (const p of lineup) {
     const a = p.averages, g = p.games;

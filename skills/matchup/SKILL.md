@@ -47,7 +47,20 @@ Mid-week, read the live score from the matchup page (or ESPN's `scoreByStat`, se
 
 If the helper cannot run, use `"remaining_share"` instead of `games_left` (the page's games remaining divided by total, e.g. 34 of 43 = 0.79): rougher, because it gives every player the same share. Games in progress are in neither the banked stats nor the games left; say so.
 
-Check `matchup.so_far_counted` is true and say the live score was counted. Injured players are still not modelled, including ones who return mid-week.
+Check `matchup.so_far_counted` is true and say the live score was counted. A player who returns mid-week is handled with a scenario (below); the engine does not guess it.
+
+## Your lineup, scenarios and daily lineups
+
+- **Your lineup**: if the user sets their own lineup (most do), pass the starters' names as `matchup.lineup`. The numbers then use exactly that lineup (`lineup_source: "user"`), and when the model's best fit would do better it is returned as `recommended_lineup` with its win chance: report it as a recommendation, not as what they must do. Without `matchup.lineup` the best-fit lineup is used (`"recommended"`). A lineup that cannot be seated in the league's slots is refused with the names that do not fit.
+- **Scenarios** ("what if Embiid is out", "what if Giannis is back Thursday"): add `matchup.scenarios`, for example `[{"name":"Joel Embiid","returns":"2026-11-27"}, {"side":"opponent","name":"Nikola Jokic","out_until":"2026-11-26"}]`. Each player's games are reduced by the games his team plays while he is out (exact when the day-by-day schedule is available, spread evenly and flagged otherwise). **Always say these are the user's assumptions, not measured facts**; each affected player carries a `note` saying so. `games_lost` shows what was taken away.
+- **Daily lineups and streaming** (daily-lock leagues): add `matchup.daily` with `start`/`bench` (name and the days), and/or `stream.candidates` (free agents, with `adds_left`). It models each day left, with the best lineup among the players whose teams play that day, and reports `lineup_by_day`, the effect of your starts and benches, and a ranked list of streamers (what each does to the weekly win chance if added now and kept for the rest of the week). Needs the day-by-day schedule: run `node skills/matchup/scripts/season-days.mjs <first day> <last day>` and pass its `days` object as `schedule_days` at the top of the request. A weekly-lock league has no daily lineup: the engine refuses and says so. When `daily.rough` is true (under a third of the week left) say the numbers are rougher. A streamer is assumed to stay to the end of the week.
+
+## Positions, slots, injuries and statuses
+
+- If the league card has `slots`, send them as `league.slots` (this replaces `lineup_slots`; send one or the other, never both with different numbers). Then every player on your roster, every opponent player and every candidate needs `positions` exactly as the host shows his eligibility (`"positions":"PG,SG"`), read in the same pass as the roster. The engine then fills the lineup by position, picks the best fit each week and shows each starter's `slot`. A player with no positions can only fill a UTIL slot, and the output warns that the empty-slot check is off.
+- Send each player's host injury tag as `"injury":"OUT"` (or GTD, DTD) and the date the host shows for his return as `"return_date":"2026-11-27"`. **Read these live every time and never reuse them from an earlier run**: a status can be cleared at any time. OUT with a return date uses that date; OUT with no date is counted as out for the rest of this week and back next week, and the output says that is an assumption; GTD/DTD counts as playing and is flagged. If a player's status changed since the page was read, the user tells the analyst and you correct the request.
+- After a return, a player's first 3 games count at 80% (an assumption, not measured; the user can change it with `ramp`, or turn it off with `"ramp":false`).
+- Today's date for these windows is `as_of` (default: the data file's date).
 
 ## Run the analysis
 
@@ -80,7 +93,7 @@ Look at the `matchup` object:
 ## How to talk about it
 
 - Lead with the weekly win chance, then the categories that decide it: the closest ones and the clear wins and losses. Describe a 50% category as a toss-up.
-- A win chance is not a prediction. It is the share of simulated weeks in which the rosters, as they stand, win. It does not model injuries, rest days, lineup moves or streaming during the week.
+- A win chance is not a prediction. It is the share of simulated weeks in which the rosters, as they stand, win. It does not model injuries, rest days, lineup moves or streaming during the week, except the injury statuses, scenarios and daily options above, which are labelled.
 - **Do not suggest moves** (pickups, drops, trades, which category to give up) as your own judgment. If the user asks what to do, point them to the `waiver` skill (pickups and drops) or the `trade` skill, which measure a move. Giving up a category is not measured yet: say so, and give the measured picture instead.
 - Use plain words. Do not mention z-scores or an internal score.
 - This is entertainment and strategy help. It is not betting or financial advice.

@@ -1,5 +1,6 @@
 import { LUCK_REFERENCE_SLOTS, luckScale, DEFAULT_WEEKS } from "./matchup";
 import { BASE_LUCK_CORRELATION, BASE_LUCK_SHARE, LUCK_STATS, type LuckStat } from "./lucktable";
+import { pickLineup, type Slots } from "./lineup";
 import { DEFAULT_PICK_WEIGHTS, mulberry32, pickIndex } from "./simulate";
 import type { SeasonAverages } from "./types";
 
@@ -182,7 +183,7 @@ export function anyValue(base: PlayerBase, codes: string[], bl: Baseline): numbe
 
 // ---- weekly totals -----------------------------------------------------------------------------------------------
 
-export interface AnyPlayer { base: PlayerBase; games: number; value: number }
+export interface AnyPlayer { base: PlayerBase; games: number; value: number; positions?: string[] }
 /** What one team produces in a week before luck: expected base totals, and per-game chances of a double- and triple-double. */
 export interface AnyTotals { t: BaseTotals; ddGames: number[]; tdGames: number[] }
 
@@ -194,8 +195,8 @@ function chances(p: number, games: number, into: number[]): void {
   if (frac > 1e-9) into.push(p * frac);
 }
 
-export function anyTotals(players: AnyPlayer[], slots: number): AnyTotals {
-  const lineup = [...players].sort((a, b) => b.value - a.value).slice(0, slots);
+export function anyTotals(players: AnyPlayer[], slots: Slots): AnyTotals {
+  const lineup = pickLineup(players, slots);
   const t = ZERO();
   const ddGames: number[] = [], tdGames: number[] = [];
   for (const p of lineup) {

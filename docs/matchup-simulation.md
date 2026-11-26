@@ -35,7 +35,7 @@ FG% swings about 2.4 percentage points and FT% about 4.1. Luck is correlated acr
 
 ## What it does not model
 
-Injuries and rest days during the week, lineup moves and streaming, positions, the opponent's moves. It is a probability for the rosters as they stand, not a prediction.
+The opponent's moves, future injuries, and (unless a scenario or the daily option is asked for) injuries and rest days during the week, lineup moves and streaming. Positions are used only when the league's slots are given. It is a probability for the rosters as they stand, not a prediction.
 
 ## Planned upgrade
 
@@ -54,3 +54,23 @@ Everything here is a difference between two simulations. Skills must not add adv
 ## Back-test: does a quoted 60% win 60% of the time?
 
 Measured on 18 real weeks of 2025-26 (issue #9; full tables in `docs/calibration.md`, script `engine/scripts/calibration-backtest.ts`). Quotes with each team's real schedule game counts are **overconfident in the tails**: a quoted 90-100% won about 81%, 80-90% won 70%, 70-80% won 61%; quotes of 40-60% are fine (calibration slope 0.61; Brier 0.235 against 0.250 for a coin flip). With the games players really played, the same model is nearly calibrated (slope 0.94), so the luck table is about right and the gap comes from injuries and rest, which the model does not include. Custom category lists and points leagues behave the same. Until that is addressed, treat quotes above about 80% or below about 20% as less certain than they look.
+
+## Lineup slots and positions
+
+With `league.slots` the lineup is filled by position instead of "best N". Players are taken best-first and kept if everyone kept can still be seated (the best lineup for any such slot set, because seating is a matching problem where best-first is optimal). A player whose team has no game that week is not available. Players with no positions fill UTIL only; the engine warns and turns the empty-slot check off rather than guess. Typical (simulated-draft) opponents stay position-free, so team-check numbers do not move; your team and a real opponent use real slots. In move ranking, a move that leaves a required slot with nobody eligible is listed as `breaks-slot` and never recommended. A lineup the user gives is used as given; the best fit is shown next to it with its win chance.
+
+## Add limit and injured list
+
+A roster player whose host status is one the league lets into an IL slot moves there while slots are open, freeing his spot; an add needs no drop while a roster spot is open (a move with a null drop is scored against the roster as it stands). With `adds_left`, the best group of moves is found greedily (apply the best, re-rank against the changed roster, repeat) and the combined roster is re-simulated, so the number is a measured difference, not a sum.
+
+## Injury windows and scenarios
+
+A player is out from a day until a return day (or for the whole horizon). Games on those days are lost, using the day-by-day schedule (spread evenly over the week and flagged when only weekly counts exist). After a return the first 3 games count at 80% of normal output: an assumption, not measured, user-adjustable; the real figure can be measured if game logs are added. A host OUT tag with no date means out for the rest of this week and back next week (flagged); GTD/DTD counts as playing. Statuses are read live each run and never stored.
+
+## Daily lineups and streaming
+
+With a daily lock the days left are modelled one by one: each day the best lineup among players whose teams play that day. Start and bench changes, and adding a streamer for the rest of the week, are differences between two simulations. Luck was measured on whole weeks and is scaled by 1 / sqrt(share left) for the part left; under a third of the lineup's games left the output is labelled rougher.
+
+## Rest of season and playoffs
+
+Each remaining week's win and tie chance comes from the weekly simulation (real opponent roster when given, typical otherwise). The season is then played out thousands of times: your results from those chances; other teams' remaining games as fair coin flips (their rosters are unknown); seeds by record with ties settled by the tiebreaker only as far as today's values are known, else a coin flip; a bracket padded to a power of two with byes for the top seeds; each round's win chance from the weekly simulation against a typical opponent. Output states these limits, and `tiebreak_decides_pct` says how often a tie settled your spot.

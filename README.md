@@ -4,7 +4,7 @@ A free, open-source fantasy basketball analyst for AI agents (ChatGPT, Claude, a
 
 It turns your league's rosters into plain answers: where your team is strong and weak in each category, who to pick up, and what trades make sense. Your agent reads your league; this project supplies the numbers and the method.
 
-**Status:** early work in progress. The engine, the data file (published nightly) and six skills (`analyst`, the single entry point, plus `setup`, `team-check`, `matchup`, `waiver`, `trade`) exist as a Claude plugin. Draft and daily-lineup help are not built yet. To try the plugin: `/plugin marketplace add danielshenmuan/fantasy-basketball-analyst`, then install `fantasy-basketball-analyst`.
+**Status:** early work in progress. The engine, the data file (published nightly) and six skills (`analyst`, the single entry point, plus `setup`, `team-check`, `matchup`, `waiver`, `trade`) exist as a Claude plugin. The `outlook` skill and the matchup skill's scenario and daily-lineup options exist; draft help is not built. To try the plugin: `/plugin marketplace add danielshenmuan/fantasy-basketball-analyst`, then install `fantasy-basketball-analyst`.
 
 ## Layout
 

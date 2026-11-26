@@ -43,7 +43,7 @@ Read the whole settings page, not just the roster size. Write down what is there
 **Structure**
 - League name, host, URL or league id, your team name
 - Number of teams
-- Starting spots (players who count each week), bench spots, and IL slots
+- Starting spots (players who count each week) **and the slot list** (PG, SG, G, SF, PF, F, C, Util), bench spots, IL slots **and which injury statuses the league lets into IL**
 - Lineup lock: daily or weekly
 - Weekly add limit
 - Matchup length (usually one week)
@@ -85,6 +85,7 @@ Team: My Team
 Format: head-to-head, 9 categories (PTS REB AST STL BLK 3PM FG% FT% TO)
 Tie rule: equal categories won = a tied week
 Teams: 14   Starters: 10   Bench: 3   IL: 4
+Slots: PG SG G SF PF F C C UTIL UTIL   IL accepts: OUT
 Lineup: daily   Weekly adds: 4   Matchup: 1 week
 Playoffs: 8 teams, from week 21, 3 weeks
 Tiebreakers: category tie = no win for either side
@@ -109,6 +110,8 @@ If you can write files (Claude Code, Cowork), also save the same facts as JSON t
   "starters": 10,
   "bench_spots": 3,
   "il_slots": 4,
+  "il_eligible_statuses": ["OUT"],
+  "slots": ["PG", "SG", "G", "SF", "PF", "F", "C", "C", "UTIL", "UTIL"],
   "categories": ["Points", "Rebounds", "Assists", "Steals", "Blocks", "3-pointers made", "Field goal percentage", "Free throw percentage", "Turnovers"],
   "tie_rule": "tied week",
   "scoring": null,
@@ -125,6 +128,6 @@ If you can write files (Claude Code, Cowork), also save the same facts as JSON t
 }
 ```
 
-`roster_spots` is the number of non-IL players on the roster (starters plus bench); `starters` is how many count each week. **Do not save the roster**: it changes daily, so read it fresh each time. Do not save passwords or tokens.
+`slots` are the starting lineup slots exactly as the host lists them (bench and IL are not lineup slots); `il_eligible_statuses` are the injury statuses this league lets into an injured-list slot (Yahoo: IL takes players the host marks OUT or INJ, IL+ also day-to-day; ESPN: OUT). Read both from the league settings page, never from memory: each league sets its own. If the league changes them, the user tells the analyst and setup is run again; the card shows the date it was read. `lineup` is `daily` or `weekly` (send it as `league.lineup_lock`). `roster_spots` is the number of non-IL players on the roster (starters plus bench); `starters` is how many count each week. **Do not save the roster**: it changes daily, so read it fresh each time. Do not save passwords or tokens.
 
 Finish by telling the user what was saved, that they can now ask for a team check any time, and where the card is.

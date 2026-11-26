@@ -1,4 +1,5 @@
 import { simulateWeeks, weeklyTotals, type WeeklyTotals } from "./matchup";
+import { ANY_POSITION, pickLineup, unfilledSlots, type Slots } from "./lineup";
 import type { AnyTotals } from "./anycat";
 import { CATEGORIES, type SeasonAverages } from "./types";
 
@@ -17,10 +18,18 @@ export interface Entry {
   effectiveGames?: number;
   /** Per-game base stats, for leagues scored on a category list other than the standard nine (anycat.ts). */
   base?: import("./anycat").PlayerBase;
+  /** Eligible positions as the league host shows them (PG SG SF PF C). Used only when the league has lineup slots. */
+  positions?: string[];
+  /** Injury or return window for this player (see availability.ts); reduces his games in a week. */
+  avail?: import("./availability").Availability;
 }
 
 /** One scheduled week: games per team and the opponents the roster is simulated against. */
-export interface WeekEnv { start: string | null; gamesFor: (team?: string) => number; opponents: WeeklyTotals[] | AnyTotals[] }
+export interface WeekEnv {
+  start: string | null; gamesFor: (team?: string) => number; opponents: WeeklyTotals[] | AnyTotals[];
+  /** Games this player plays this week (injury windows and ramp-up applied). Default: his team's games. */
+  gamesOf?: (e: Entry) => number;
+}
 
 /**
  * How a roster becomes a weekly win chance. Without one, the nine-category model in matchup.ts is used. A league with
@@ -29,13 +38,19 @@ export interface WeekEnv { start: string | null; gamesFor: (team?: string) => nu
 export interface ScoreEngine {
   /** Categories this engine scores, in order. */
   codes: string[];
-  totals(list: Entry[], gamesFor: (team?: string) => number, slots: number): unknown;
+  totals(list: Entry[], gamesOf: (e: Entry) => number, slots: Slots): unknown;
   simulate(me: unknown, opponents: unknown[], o: { weeks: number; seed: number; slots: number }): { weekWin: number; categories: Record<string, number> };
 }
 
 export interface MoveEnv {
   /** Players who count each week. */
   slots: number;
+  /** The league's lineup slots (["PG","SG","G",...]). When given, lineups are filled by position. `slots` is its length. */
+  slotList?: string[];
+  /** True when every roster player has positions, so a move that leaves a required slot empty can be detected and refused. */
+  checkSlots?: boolean;
+  /** Open active roster spots: an add needs no drop while one is open. */
+  openSpots?: number;
   /** Weeks averaged together (this week, and next, ...). */
   weeks: WeekEnv[];
   simWeeks: number;
@@ -48,17 +63,22 @@ export interface MoveEnv {
 export interface Score { weekWin: number; categories: Record<string, number> }
 
 /** Weekly win chance and per-category win chance of a roster, averaged over the environment's weeks. */
+const lineupOf = (env: MoveEnv): Slots => env.slotList ?? env.slots;
+/** The replacement-level filler fits any slot. */
+const fillerOf = (env: MoveEnv): Entry => (env.slotList ? { ...env.replacement, positions: [ANY_POSITION] } : env.replacement);
+const gamesIn = (w: WeekEnv) => (e: Entry): number => (w.gamesOf ? w.gamesOf(e) : w.gamesFor(e.team));
+
 export function scoreRoster(roster: Entry[], env: MoveEnv, simWeeks = env.simWeeks): Score {
   const pad = Math.max(0, env.slots - roster.length);
-  const list = pad > 0 ? [...roster, ...Array<Entry>(pad).fill(env.replacement)] : roster;
+  const list = pad > 0 ? [...roster, ...Array<Entry>(pad).fill(fillerOf(env))] : roster;
   let week = 0;
   const codes = env.engine?.codes ?? [...CATEGORIES];
   const cats: Record<string, number> = Object.fromEntries(codes.map((c) => [c, 0]));
   for (const w of env.weeks) {
     const r = env.engine
-      ? env.engine.simulate(env.engine.totals(list, w.gamesFor, env.slots), w.opponents as unknown[], { weeks: simWeeks, seed: env.seed, slots: env.slots })
+      ? env.engine.simulate(env.engine.totals(list, gamesIn(w), lineupOf(env)), w.opponents as unknown[], { weeks: simWeeks, seed: env.seed, slots: env.slots })
       : simulateWeeks(
-          weeklyTotals(list.map((p) => ({ averages: p.averages, games: w.gamesFor(p.team), value: p.value })), env.slots),
+          weeklyTotals(list.map((p) => ({ averages: p.averages, games: gamesIn(w)(p), value: p.value, positions: p.positions })), lineupOf(env)),
           w.opponents as WeeklyTotals[], { weeks: simWeeks, seed: env.seed, slots: env.slots });
     week += r.weekWin;
     for (const c of codes) cats[c]! += r.categories[c]!;
@@ -72,7 +92,8 @@ const diff = (a: Score, b: Score): Record<string, number> =>
   Object.fromEntries(Object.keys(a.categories).map((c) => [c, a.categories[c]! - b.categories[c]!]));
 
 export interface Move {
-  add: Entry; drop: Entry; after: Score;
+  /** `drop` is null when an open roster spot (or an injured-list slot) means nobody has to go. */
+  add: Entry; drop: Entry | null; after: Score;
   /** Weekly win chance gained against the roster as it stands. */
   delta: number;
   /** What dropping that player alone would do (nobody added; his lineup spot goes to the next player). */
@@ -82,13 +103,25 @@ export interface Move {
   categoryDelta: Record<string, number>;
 }
 /** bench-only: would not enter the lineup. no-gain-from-add: enters, but adds nothing beyond the drop. below-top: ranked worse than the moves shown. */
-export interface Unranked { add: Entry; reason: "bench-only" | "no-gain-from-add" | "below-top"; /** For no-gain-from-add: the drop that served this add best (explanation only; ranking is unchanged). */ drop?: Entry }
+export interface Unranked {
+  add: Entry; reason: "bench-only" | "no-gain-from-add" | "below-top" | "breaks-slot";
+  /** For no-gain-from-add: the drop that served this add best (explanation only; ranking is unchanged). */ drop?: Entry | null;
+  /** For breaks-slot: the required slots no player on the roster could fill after the best-on-paper move. */ empty_slots?: string[];
+}
 
 /** Does `entry` count in the lineup of `roster` (padded with the replacement player like scoreRoster)? Same pick as weeklyTotals. */
 export function entersLineup(roster: Entry[], entry: Entry, env: MoveEnv): boolean {
   const pad = Math.max(0, env.slots - roster.length);
-  const list = pad > 0 ? [...roster, ...Array<Entry>(pad).fill(env.replacement)] : roster;
-  return [...list].sort((a, b) => b.value - a.value).slice(0, env.slots).includes(entry);
+  const list = pad > 0 ? [...roster, ...Array<Entry>(pad).fill(fillerOf(env))] : roster;
+  const seatable = list.map((p) => ({ p, value: p.value, positions: p.positions, games: Math.max(...env.weeks.map((w) => gamesIn(w)(p))) }));
+  return pickLineup(seatable, lineupOf(env)).some((s) => s.p === entry);
+}
+
+/** Slots left with nobody to fill them after a roster change, compared with before. Empty when slots are not checked. */
+export function slotsBroken(before: Entry[], after: Entry[], env: MoveEnv): string[] {
+  if (!env.slotList || !env.checkSlots) return [];
+  const b = unfilledSlots(before, env.slotList), a = unfilledSlots(after, env.slotList);
+  return a.length > b.length ? a : [];
 }
 
 /**
@@ -104,25 +137,31 @@ export function rankWaiverMoves(
   const droppable = opts.droppable ?? roster;
   const top = opts.top ?? 8;
   const quick = opts.quickWeeks ?? Math.min(env.simWeeks, 3000);
-  const without = (drop: Entry) => roster.filter((p) => p.id !== drop.id);
+  // Every drop to try; null = add with no drop, allowed only while a roster spot is open.
+  const drops: (Entry | null)[] = [...droppable, ...((env.openSpots ?? 0) > 0 ? [null] : [])];
+  const without = (drop: Entry | null) => (drop ? roster.filter((p) => p.id !== drop.id) : roster);
   const unranked: Unranked[] = [];
-  // Weekly win chance of dropping each player alone, at the quick length (shared by every candidate).
+  // Weekly win chance of dropping each player alone, at the quick length (shared by every candidate). Key 0: nobody dropped.
   const dropOnlyQuick = new Map<number, number>();
-  const dropOnlyAt = (drop: Entry, weeks: number, cache: Map<number, number>) => {
-    if (!cache.has(drop.id)) cache.set(drop.id, scoreRoster(without(drop), env, weeks).weekWin);
-    return cache.get(drop.id)!;
+  const dropOnlyAt = (drop: Entry | null, weeks: number, cache: Map<number, number>) => {
+    const k = drop ? drop.id : 0;
+    if (!cache.has(k)) cache.set(k, scoreRoster(without(drop), env, weeks).weekWin);
+    return cache.get(k)!;
   };
   // Each candidate that would enter the lineup, with the drop that serves it best.
-  const picks: { add: Entry; drop: Entry; win: number; addGain: number }[] = [];
+  const picks: { add: Entry; drop: Entry | null; win: number; addGain: number }[] = [];
   for (const add of candidates) {
-    let pick: { add: Entry; drop: Entry; win: number } | null = null;
-    for (const drop of droppable) {
+    let pick: { add: Entry; drop: Entry | null; win: number } | null = null;
+    let broke: string[] | null = null;
+    for (const drop of drops) {
       const next = without(drop).concat(add);
+      const empty = slotsBroken(roster, next, env);
+      if (empty.length > 0) { broke = broke ?? empty; continue; }
       if (!entersLineup(next, add, env)) continue;
       const win = scoreRoster(next, env, quick).weekWin;
-      if (!pick || win > pick.win || (win === pick.win && drop.value < pick.drop.value)) pick = { add, drop, win };
+      if (!pick || win > pick.win || (win === pick.win && (drop?.value ?? -Infinity) < (pick.drop?.value ?? -Infinity))) pick = { add, drop, win };
     }
-    if (!pick) { unranked.push({ add, reason: "bench-only" }); continue; }
+    if (!pick) { unranked.push(broke ? { add, reason: "breaks-slot", empty_slots: broke } : { add, reason: "bench-only" }); continue; }
     const addGain = pick.win - dropOnlyAt(pick.drop, quick, dropOnlyQuick);
     if (addGain <= 0) { unranked.push({ add, reason: "no-gain-from-add", drop: pick.drop }); continue; }
     picks.push({ ...pick, addGain });
@@ -144,14 +183,15 @@ export function rankWaiverMoves(
   return { baseline, moves, unranked };
 }
 
-export interface TradeResult { before: Score; after: Score; delta: number; categoryDelta: Record<string, number> }
+export interface TradeResult { before: Score; after: Score; delta: number; categoryDelta: Record<string, number>; /** Required slots nobody can fill after the trade (empty: none, or slots not checked). */ emptySlots: string[] }
 
 /** What a trade does to one side: remove `give`, add `get`. */
 export function evaluateTrade(roster: Entry[], give: Entry[], get: Entry[], env: MoveEnv): TradeResult {
   const giveIds = new Set(give.map((p) => p.id));
   const before = scoreRoster(roster, env);
-  const after = scoreRoster(roster.filter((p) => !giveIds.has(p.id)).concat(get), env);
-  return { before, after, delta: after.weekWin - before.weekWin, categoryDelta: diff(after, before) };
+  const next = roster.filter((p) => !giveIds.has(p.id)).concat(get);
+  const after = scoreRoster(next, env);
+  return { before, after, delta: after.weekWin - before.weekWin, categoryDelta: diff(after, before), emptySlots: slotsBroken(roster, next, env) };
 }
 
 export interface Offer { give: Entry; get: Entry; mine: TradeResult; theirs: TradeResult }
@@ -170,9 +210,11 @@ export function searchTrades(
   const found: { give: Entry; get: Entry; dm: number; dt: number }[] = [];
   for (const give of mine)
     for (const get of theirs) {
-      const dm = scoreRoster(mine.filter((p) => p.id !== give.id).concat(get), env, quick).weekWin - baseMine;
+      const nextMine = mine.filter((p) => p.id !== give.id).concat(get), nextTheirs = theirs.filter((p) => p.id !== get.id).concat(give);
+      if (slotsBroken(mine, nextMine, env).length > 0 || slotsBroken(theirs, nextTheirs, env).length > 0) continue;
+      const dm = scoreRoster(nextMine, env, quick).weekWin - baseMine;
       if (dm <= 0) continue;
-      const dt = scoreRoster(theirs.filter((p) => p.id !== get.id).concat(give), env, quick).weekWin - baseTheirs;
+      const dt = scoreRoster(nextTheirs, env, quick).weekWin - baseTheirs;
       if (dt >= minTheirs) found.push({ give, get, dm, dt });
     }
   found.sort((a, b) => b.dm - a.dm);

@@ -3,10 +3,14 @@ import {
   type AnyPlayer, type AnyTotals, type AnySide, type Baseline, type BaseKey, type BaseTotals, type PlayerBase,
 } from "./anycat";
 import {
-  resolveList, tradeWith, waiverWith, type AnalyzeInput, type MoveSetup, type NameResult, type PlayerGames,
+  asOfOf, lineupSetting, withScheduleDays, resolveList, tradeWith, waiverWith, type AnalyzeInput, type MoveSetup, type NameResult, type PlayerGames, type PlayerRef,
   type TradeOutput, type WaiverOutput,
   leftOutWarnings,
 } from "./analyze";
+import { gamesWithAvailability } from "./availability";
+import { runDaily, type DailyEngine } from "./daily";
+import type { Slots } from "./lineup";
+import { resolveSide } from "./sideutil";
 import { blendWeight } from "./baseline";
 import { estimateAverages, seasonLabel, startYear } from "./history";
 import { DEFAULT_WEEKS, DEFAULT_WEEK_GAMES, mondayOf } from "./matchup";
@@ -38,6 +42,13 @@ export interface AnyMatchupOutput {
   /** Whole percent of weeks you win exactly k categories, k = 0..N. */
   distribution_pct: number[];
   rosters: { you: PlayerGames[]; opponent?: PlayerGames[] };
+  lineup_source: "user" | "recommended";
+  recommended_lineup?: { players: { name: string; slot?: string }[]; week_win_pct: number };
+  availability_applied: boolean;
+  daily?: import("./daily").DailyOutput;
+  /** Exact win chance (0 to 1), for programs. */
+  week_win_prob: number;
+  week_tie_prob: number;
   names: NameResult[];
   assumptions: string[];
 }
@@ -59,6 +70,7 @@ export interface AnyAnalyzeOutput {
   matchup?: AnyMatchupOutput;
   waiver?: WaiverOutput;
   trade?: TradeOutput;
+  outlook?: import("./outlook").OutlookOutput;
 }
 
 const band = (p: number): Band => (p >= 85 ? "elite" : p >= 60 ? "strong" : p >= 40 ? "neutral" : "weak");
@@ -94,7 +106,7 @@ function estimateAll(snapshot: Snapshot, reference: string, current: string, val
 
 const engineFor = (codes: string[], weights?: Weights): ScoreEngine => ({
   codes,
-  totals: (list, gamesFor, slots) => anyTotals(list.map((p) => ({ base: p.base!, games: gamesFor(p.team), value: p.value })), slots),
+  totals: (list, gamesOf, slots) => anyTotals(list.map((p) => ({ base: p.base!, games: gamesOf(p), value: p.value, positions: p.positions })), slots),
   simulate: (me, opps, o) => {
     if (weights) return { weekWin: simulatePoints(me as AnyTotals, opps as AnyTotals[], weights, o).weekWin, categories: Object.fromEntries(codes.map((c) => [c, 0])) };
     const r = simulateAny(me as AnyTotals, opps as AnyTotals[], codes, o);
@@ -102,7 +114,8 @@ const engineFor = (codes: string[], weights?: Weights): ScoreEngine => ({
   },
 });
 
-export function analyzeAny(input: AnalyzeInput, snapshot: Snapshot, codes: string[], weights?: Weights): AnyAnalyzeOutput {
+export function analyzeAny(input: AnalyzeInput, snapshotIn: Snapshot, codes: string[], weights?: Weights): AnyAnalyzeOutput {
+  const snapshot = withScheduleDays(input, snapshotIn);
   const { teams, roster_spots } = input.league;
   requireData(snapshot, codes);
   const reference = input.reference ?? snapshot.reference_season;
@@ -147,10 +160,11 @@ export function analyzeAny(input: AnalyzeInput, snapshot: Snapshot, codes: strin
   // Team-check analogue: where your expected week sits among typical teams.
   const thisMonday = mondayOf(snapshot.generated_at);
   const wk0 = scheduleWeek(thisMonday);
-  const slots0 = input.matchup?.lineup_slots ?? input.waiver?.lineup_slots ?? input.trade?.lineup_slots ?? roster_spots;
+  const set0 = lineupSetting(input, input.matchup?.lineup_slots ?? input.waiver?.lineup_slots ?? input.trade?.lineup_slots);
+  const slots0 = set0.slots;
   const myEntries = resolveList(input.roster, snapshot, estimated, names);
   const typical0 = typicalAnyOpponents(pool as never, { teams, rosterSpots: roster_spots }, slots0, gamesIn(wk0?.games ?? null), { leagues: 300, seed });
-  const mine0 = anyTotals(myEntries.map((e) => ({ base: e.base!, games: gamesIn(wk0?.games ?? null)(e.team), value: e.value })), slots0);
+  const mine0 = anyTotals(myEntries.map((e) => ({ base: e.base!, games: gamesIn(wk0?.games ?? null)(e.team), value: e.value, positions: e.positions })), set0.slotList ?? slots0);
   const ranking = weights ? [] : codes.map((c) => {
     const mineV = categoryValue(c, mine0.t);
     const worse = typical0.filter((o) => (isLowerCategory(c) ? categoryValue(c, o.t) > mineV : categoryValue(c, o.t) < mineV)).length;
@@ -184,8 +198,7 @@ function anyMoveSetup(
 ): MoveSetup {
   const { teams, roster_spots } = input.league;
   const common = (input.waiver ?? input.trade)!;
-  const slots = common.lineup_slots ?? roster_spots;
-  if (!Number.isInteger(slots) || slots < 1 || slots > 20) throw new Error("lineup_slots must be a whole number from 1 to 20");
+  const { slots, slotList } = lineupSetting(input, common.lineup_slots);
   const horizon = Math.max(1, Math.min(4, common.horizon_weeks ?? 2));
   const simWeeks = common.weeks ?? 6000;
   const replacement = pool[teams * roster_spots - 1]!;
@@ -194,7 +207,8 @@ function anyMoveSetup(
   const assumptions: string[] = [`Categories scored: ${codes.join(", ")}.`];
   const mk = (start: string | null, games: Record<string, number> | null): WeekEnv => {
     const gamesFor = (team?: string) => (games && team ? (games[team] ?? 0) : DEFAULT_WEEK_GAMES);
-    return { start, gamesFor, opponents: typicalAnyOpponents(pool as never, { teams, rosterSpots: roster_spots }, slots, gamesFor, { leagues: 150, seed }) };
+    const gamesOf = (e: Entry) => (e.avail && start && games ? gamesWithAvailability(snapshot, e.team, start, gamesFor(e.team), e.avail).games : gamesFor(e.team));
+    return { start, gamesFor, gamesOf, opponents: typicalAnyOpponents(pool as never, { teams, rosterSpots: roster_spots }, slots, gamesFor, { leagues: 150, seed }) };
   };
   const weeks = scheduled.length > 0 ? scheduled.map((x) => mk(x.start, x.games)) : [mk(null, null)];
   const gamesSource = scheduled.length > 0 ? "schedule" : "assumed";
@@ -203,10 +217,11 @@ function anyMoveSetup(
     gamesSource === "schedule"
       ? `Averaged over ${weeks.length} week(s) starting ${weeks[0]!.start}, counting each player's real games from the NBA schedule.`
       : `No schedule in the data, so every player gets an average week of ${DEFAULT_WEEK_GAMES} games.`,
-    `Each score is a weekly win chance (more categories won than lost) against typical opponents (${weeks[0]!.opponents.length} teams from simulated ${teams}-team drafts on this league's categories, positions ignored), ${simWeeks} simulated weeks with a fixed seed. ` +
-      `A move is scored by re-running the same weeks with the roster changed. Injuries, rest days and lineup moves during the week are not modelled. An empty lineup spot is filled by a replacement-level player.`,
+    `Each score is a weekly win chance (more categories won than lost) against typical opponents (${weeks[0]!.opponents.length} teams from simulated ${teams}-team drafts on this league's categories, positions ignored for them), ${simWeeks} simulated weeks with a fixed seed. ` +
+      `A move is scored by re-running the same weeks with the roster changed. Injuries, rest days and lineup moves during the week are not modelled (except an injury status read from the league page). An empty lineup spot is filled by a replacement-level player.` +
+      (slotList ? ` Your lineup uses the league's slots (${slotList.join(" ")}); each week the best-fitting lineup is used.` : ""),
   );
-  const env: MoveEnv = { slots, weeks, simWeeks, seed, replacement, engine };
+  const env: MoveEnv = { slots, ...(slotList ? { slotList } : {}), weeks, simWeeks, seed, replacement, engine };
   return { env, estimated, weeksUsed: weeks.map((x) => x.start ?? "assumed"), gamesSource, scheduleIncomplete: scheduled.some((x) => (x.tbd_slots ?? 0) > 0), assumptions };
 }
 
@@ -220,8 +235,8 @@ function runAnyMatchup(
 ): AnyMatchupOutput {
   const m = input.matchup!;
   const { teams, roster_spots } = input.league;
-  const slots = m.lineup_slots ?? roster_spots;
-  if (!Number.isInteger(slots) || slots < 1 || slots > 20) throw new Error("matchup.lineup_slots must be a whole number from 1 to 20");
+  const { slots, slotList } = lineupSetting(input, m.lineup_slots, "matchup.lineup_slots");
+  const lineupSlots: Slots = slotList ?? slots;
   const assumptions: string[] = [];
   const sf = m.so_far as unknown as { you: AnyBanked & { points?: number }; opponent: AnyBanked & { points?: number }; games_left?: Record<string, number>; remaining_share?: number } | undefined;
   const need = weights ? [] : neededStats(codes);
@@ -243,68 +258,96 @@ function runAnyMatchup(
     ? `Games per player come from the NBA schedule for the week of ${weekStart}. Injuries and rest days are not modelled.`
     : `No schedule for the week of ${weekStart} in the data, so every player gets an average week of ${DEFAULT_WEEK_GAMES} games.`);
   const leftFor = (team?: string) => (sf?.games_left && team ? (sf.games_left[team] ?? 0) : 0);
-
-  const sideOf = (list: { name: string; status?: "IL" | "active" }[], label: string) => {
-    const names: NameResult[] = [];
-    const rows: (PlayerGames & { value: number })[] = [];
-    const players: AnyPlayer[] = [], lefts: number[] = [];
-    for (const r of list) {
-      const hit = resolvePlayer(r.name, snapshot.players);
-      if (hit.status === "matched") {
-        names.push({ input: r.name, status: "matched", matched: hit.player.name });
-        const e = estimated.get(hit.player.id);
-        if (e) rows.push({ name: hit.player.name, team: e.team ?? null, games: gamesFor(e.team), ...(sf?.games_left ? { games_left: leftFor(e.team) } : {}), counted: false, ...(r.status === "IL" ? { status: "IL" as const } : {}), value: e.value });
-        if (r.status !== "IL" && e) { players.push({ base: e.base!, games: gamesFor(e.team), value: e.value }); lefts.push(leftFor(e.team)); }
-      } else if (hit.status === "ambiguous") names.push({ input: r.name, status: "ambiguous", candidates: hit.candidates.map((c) => ({ id: c.id, name: c.name, latest_season: c.seasons[0]?.season ?? "" })) });
-      else names.push({ input: r.name, status: "not_found" });
-    }
-    const missing = names.filter((n) => n.status !== "matched").length;
-    if (missing > 0) assumptions.push(`${missing} player(s) in the ${label} roster could not be matched and are left out of the weekly totals.`);
-    const totals = anyTotals(players, slots);
-    const counted = new Set(rows.filter((x) => x.status !== "IL").sort((a, b) => b.value - a.value).slice(0, slots));
-    const outRows: PlayerGames[] = rows.map(({ value: _v, ...x }, i) => ({ ...x, counted: counted.has(rows[i]!) })).sort((a, b) => Number(b.counted) - Number(a.counted) || b.games - a.games);
+  const ctx = {
+    snapshot, estimated, gamesFor, weekStart: week ? weekStart : null, asOf: asOfOf(input, snapshot), ramp: input.ramp,
+    scenarios: m.scenarios ?? [], slots: lineupSlots, ...(sf?.games_left ? { leftFor } : {}), assumptions,
+  };
+  type Res = ReturnType<typeof resolveSide>;
+  const toAny = (r: Res, games: (x: Res["chosen"][number]) => number): AnyPlayer[] => r.chosen.map((x) => ({ base: x.entry.base!, games: games(x), value: x.entry.value, positions: x.positions }));
+  const sideOf = (list: PlayerRef[], label: string, side: "you" | "opponent", lineup?: string[]) => {
+    const res = resolveSide(list, label, side, { ...ctx, ...(lineup ? { lineup } : {}) });
+    const players = toAny(res, (x) => x.games);
+    const totals = anyTotals(players, lineupSlots);
     let remaining = totals, share = 1;
     if (sf) {
       if (!sf.games_left) { remaining = scaledAny(totals, sf.remaining_share!); share = sf.remaining_share!; }
       else {
-        remaining = anyTotals(players.map((p, i) => ({ ...p, games: lefts[i]! })), slots);
-        const lineup = players.map((p, i) => ({ p, i })).sort((a, b) => b.p.value - a.p.value).slice(0, slots);
-        const full = lineup.reduce((t, x) => t + x.p.games, 0), rest = lineup.reduce((t, x) => t + lefts[x.i]!, 0);
+        remaining = anyTotals(toAny(res, (x) => x.left), lineupSlots);
+        const full = res.chosen.reduce((s, x) => s + x.games, 0), rest = res.chosen.reduce((s, x) => s + x.left, 0);
         share = full > 0 ? Math.min(1, rest / full) : 1;
       }
     }
-    return { totals, remaining, share, names, rows: outRows };
+    return { totals, remaining, share, names: res.names, rows: res.playerRows, res };
   };
 
-  const me = sideOf(input.roster, "your");
+  const me = sideOf(input.roster, "your", "you", m.lineup);
   let opponents: AnyTotals[];
   let names = me.names;
   let opp: ReturnType<typeof sideOf> | undefined;
   if (m.opponent && m.opponent.length > 0) {
-    const o = (opp = sideOf(m.opponent, "opponent"));
+    const o = (opp = sideOf(m.opponent, "opponent", "opponent"));
     opponents = [o.totals];
     names = [...me.names, ...o.names.map((n) => ({ ...n, input: `${n.input} (opponent)` }))];
   } else {
     opponents = typicalAnyOpponents(pool as never, { teams, rosterSpots: roster_spots }, slots, gamesFor, { leagues: 300, seed: input.seed ?? 1 });
-    assumptions.push(`Typical opponents: ${opponents.length} teams from 300 simulated ${teams}-team drafts on this league's categories, each playing its best ${slots} players. Positions are ignored.`);
+    assumptions.push(`Typical opponents: ${opponents.length} teams from 300 simulated ${teams}-team drafts on this league's categories, each playing its best ${slots} players. Positions are ignored for them${slotList ? "; your team uses the league's real slots" : ""}.`);
   }
   const weeks = m.weeks ?? DEFAULT_WEEKS;
   const bank = (b: AnyBanked): BaseTotals => ({ ...ZERO_BASE(), ...Object.fromEntries(Object.entries(b).filter(([, v]) => typeof v === "number")) });
-  const progress: { me: AnySide; opponent: AnySide } | undefined = sf && opp
-    ? { me: { banked: bank(sf.you), remaining: me.remaining, share: me.share }, opponent: { banked: bank(sf.opponent), remaining: opp.remaining, share: opp.share } }
-    : undefined;
   const simOpts = { weeks, seed: input.seed ?? 1, slots };
-  const pp: { me: PointsSide; opponent: PointsSide } | undefined = weights && sf && opp
-    ? { me: { banked: sf.you.points!, remaining: me.remaining, share: me.share }, opponent: { banked: sf.opponent.points!, remaining: opp.remaining, share: opp.share } } : undefined;
-  const pr = weights ? simulatePoints(me.totals, opponents, weights, { ...simOpts, ...(pp ? { progress: pp } : {}) }) : undefined;
-  const r = pr
-    ? { weekWin: pr.weekWin, weekTie: pr.weekTie, weekLoss: pr.weekLoss, categories: {} as Record<string, number>, distribution: [] as number[] }
-    : simulateAny(me.totals, opponents, codes, { ...simOpts, ...(progress ? { progress } : {}) });
+  /** One simulation of your side given its totals, what is left to play and the share of the week left. */
+  const simulate = (totals: AnyTotals, remaining: AnyTotals, share: number, n = weeks) => {
+    const o = { ...simOpts, weeks: n };
+    if (weights) {
+      const pp: { me: PointsSide; opponent: PointsSide } | undefined = sf && opp
+        ? { me: { banked: sf.you.points!, remaining, share }, opponent: { banked: sf.opponent.points!, remaining: opp.remaining, share: opp.share } } : undefined;
+      const pr = simulatePoints(totals, opponents, weights, { ...o, ...(pp ? { progress: pp } : {}) });
+      return { weekWin: pr.weekWin, weekTie: pr.weekTie, weekLoss: pr.weekLoss, categories: {} as Record<string, number>, distribution: [] as number[], pr };
+    }
+    const progress: { me: AnySide; opponent: AnySide } | undefined = sf && opp
+      ? { me: { banked: bank(sf.you), remaining, share }, opponent: { banked: bank(sf.opponent), remaining: opp.remaining, share: opp.share } }
+      : undefined;
+    return { ...simulateAny(totals, opponents, codes, { ...o, ...(progress ? { progress } : {}) }), pr: undefined };
+  };
+  const r = simulate(me.totals, me.remaining, me.share);
+  const pr = r.pr;
+  let recommended: AnyMatchupOutput["recommended_lineup"];
+  if (me.res.recommended) {
+    const alt = resolveSide(input.roster, "your", "you", { ...ctx, assumptions: [] });
+    const altTotals = anyTotals(toAny(alt, (x) => x.games), lineupSlots);
+    let altRemaining = altTotals, altShare = 1;
+    if (sf) {
+      if (!sf.games_left) { altRemaining = scaledAny(altTotals, sf.remaining_share!); altShare = sf.remaining_share!; }
+      else {
+        altRemaining = anyTotals(toAny(alt, (x) => x.left), lineupSlots);
+        const full = alt.chosen.reduce((s, x) => s + x.games, 0), rest = alt.chosen.reduce((s, x) => s + x.left, 0);
+        altShare = full > 0 ? Math.min(1, rest / full) : 1;
+      }
+    }
+    const ra = simulate(altTotals, altRemaining, altShare);
+    recommended = { players: alt.chosen.map((x) => ({ name: x.entry.name, ...(alt.slotOf.has(x) ? { slot: alt.slotOf.get(x) } : {}) })), week_win_pct: Math.round(ra.weekWin * 100) };
+    assumptions.push("Your lineup is not the best fit for the slots by this model. The recommendation is shown with its win chance; the numbers above use the lineup you gave.");
+  }
   if (sf)
     assumptions.push(sf.games_left
       ? `The week is under way: stats already banked are kept, and the games still to play (your lineup has ${Math.round(me.share * 100)}% of its week left, theirs ${Math.round(opp!.share * 100)}%) are simulated from each player's own team games left. Games in progress or already counted by the league site must not be in the games left.`
       : `The week is under way: stats already banked are kept, and the remaining ${Math.round(sf.remaining_share! * 100)}% of each team's games are simulated. Every player is assumed to have that same share of his week left, which is rough when a team's games are lopsided.`);
-  assumptions.push(`Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed. The simulation does not model injuries, lineup moves or streaming during the week. ${weights ? "The side with more fantasy points wins; equal points are a tie." : "A week is won with more categories than the opponent; equal counts are a tie."}`);
+  const availabilityApplied = [...me.res.rows, ...(opp?.res.rows ?? [])].some((x) => x.lost > 0 || x.av);
+  if (availabilityApplied)
+    assumptions.push("Some players' games were changed by an injury status read from the league page or by a scenario you gave. Scenarios and a return day are your assumptions, not measured facts; a ramp-up after a return (default 80% output for 3 games) is also an assumption.");
+  let daily: AnyMatchupOutput["daily"];
+  if (m.daily) {
+    if (m.daily.from && m.daily.from > weekStart && !sf) throw new Error("matchup.daily.from is later than the week's start: give matchup.so_far with the stats already banked");
+    const zero = (): AnyTotals => ({ t: ZERO_BASE(), ddGames: [], tdGames: [] });
+    const engine: DailyEngine<AnyTotals> = {
+      empty: zero,
+      plus: (x, y) => { const o = zero(); for (const k of Object.keys(o.t) as BaseKey[]) o.t[k] = x.t[k] + y.t[k]; o.ddGames = [...x.ddGames, ...y.ddGames]; o.tdGames = [...x.tdGames, ...y.tdGames]; return o; },
+      dayTotals: (ps) => anyTotals(ps.map((p) => ({ base: p.entry.base!, games: p.weight, value: p.entry.value, positions: p.positions })), lineupSlots),
+      win: (remaining, share, n) => simulate(sf ? me.totals : remaining, remaining, share, n).weekWin,
+    };
+    daily = runDaily(input, snapshot, m, { me: me.res, weekStart, lineupSlots, weeks, engine, estimated, gamesFor, asOf: ctx.asOf, hasBanked: Boolean(sf), assumptions });
+  }
+  assumptions.push(`Week-to-week luck is measured on 2025-26 weekly results after removing game counts. ${weeks} simulated weeks, fixed seed. The simulation does not model ${availabilityApplied ? "other injuries, " : "injuries, "}lineup moves or streaming during the week${daily ? " except in the daily section" : ""}. ${weights ? "The side with more fantasy points wins; equal points are a tie." : "A week is won with more categories than the opponent; equal counts are a tie."}`);
   const pct = (x: number) => Math.round(x * 100);
   return {
     week_start: week ? weekStart : null,
@@ -318,6 +361,11 @@ function runAnyMatchup(
     week_win_pct: pct(r.weekWin), week_tie_pct: pct(r.weekTie), week_loss_pct: pct(r.weekLoss),
     distribution_pct: r.distribution.map(pct),
     rosters: { you: me.rows, ...(opp ? { opponent: opp.rows } : {}) },
+    lineup_source: m.lineup && m.lineup.length > 0 ? "user" : "recommended",
+    ...(recommended ? { recommended_lineup: recommended } : {}),
+    availability_applied: availabilityApplied,
+    ...(daily ? { daily } : {}),
+    week_win_prob: r.weekWin, week_tie_prob: r.weekTie,
     names, assumptions,
   };
 }

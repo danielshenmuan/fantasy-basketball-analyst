@@ -21,6 +21,19 @@ Read all three in one pass without asking for pasted text: follow `../analyst/re
 
 **Before running anything, show the roster, the league settings and the candidate list, and ask the user to confirm.**
 
+## Add limit, open spots and the injured list
+
+- Send `waiver.adds_left` (adds still allowed this week, from the host or the league card minus adds made) and the league's `il_slots` and `il_eligible_statuses` in `league`. The result has `best_use_of_adds`: the best group of moves within the adds left, found by re-simulating the combined roster (never by adding up single moves). With `adds_left` 0 it says there is nothing to do this week. Tell the user when the ranked moves outnumber the adds.
+- A roster player whose host status is one the league lets into IL moves to an open IL slot, which frees his roster spot (`il_moves`, `open_spots`). While a spot is open an add needs no drop (`drop` is null in the move). Nothing is assumed when the league's IL rules were not sent.
+- `breaks-slot` in `not_ranked`: every drop that makes room for this player would leave a required lineup slot (named in `empty_slots`) with nobody eligible. Relay the explanation; he is never recommended.
+
+## Positions, slots, injuries and statuses
+
+- If the league card has `slots`, send them as `league.slots` (this replaces `lineup_slots`; send one or the other, never both with different numbers). Then every player on your roster, every opponent player and every candidate needs `positions` exactly as the host shows his eligibility (`"positions":"PG,SG"`), read in the same pass as the roster. The engine then fills the lineup by position, picks the best fit each week and shows each starter's `slot`. A player with no positions can only fill a UTIL slot, and the output warns that the empty-slot check is off.
+- Send each player's host injury tag as `"injury":"OUT"` (or GTD, DTD) and the date the host shows for his return as `"return_date":"2026-11-27"`. **Read these live every time and never reuse them from an earlier run**: a status can be cleared at any time. OUT with a return date uses that date; OUT with no date is counted as out for the rest of this week and back next week, and the output says that is an assumption; GTD/DTD counts as playing and is flagged. If a player's status changed since the page was read, the user tells the analyst and you correct the request.
+- After a return, a player's first 3 games count at 80% (an assumption, not measured; the user can change it with `ramp`, or turn it off with `"ramp":false`).
+- Today's date for these windows is `as_of` (default: the data file's date).
+
 ## Run the analysis
 
 Write the request as JSON and run the script with Node 18 or newer, using the live data file (refreshed every night):
@@ -54,8 +67,8 @@ Look at the `waiver` object:
 
 - Lead with the best measured moves and what they do to the weekly win chance. Then say which categories each one moves, using the category deltas, in words.
 - **Do not add advice of your own**: do not say a player "fits your build", do not suggest punting a category, and do not recommend moves that were not in the result. If the user asks for something the script did not measure (for example giving up a category), say it was not measured.
-- Tell the user about the weekly add limit if the best moves outnumber the adds left, and let them choose.
-- A win chance is not a prediction. The simulation does not model injuries, rest days, lineup moves or streaming during the week, and positions are ignored.
+- Tell the user about the weekly add limit if the best moves outnumber the adds left, and let them choose; `best_use_of_adds` is the measured best group.
+- A win chance is not a prediction. The simulation does not model injuries, rest days, lineup moves or streaming during the week, and positions are ignored unless the league has slots. For streaming a roster spot for the days left in a week, use the `matchup` skill's daily option.
 - This is entertainment and strategy help. It is not betting or financial advice.
 
 

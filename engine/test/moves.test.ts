@@ -45,7 +45,7 @@ describe("rankWaiverMoves", () => {
   test("adds the better player, dropping the weakest, and ranks by gain", () => {
     const { baseline, moves } = rankWaiverMoves(roster, [bad, good], env);
     expect(moves[0]!.add.name).toBe("good");
-    expect(moves[0]!.drop.name).toBe("weak");
+    expect(moves[0]!.drop!.name).toBe("weak");
     expect(moves[0]!.delta).toBeGreaterThan(0.05);
     expect(moves[0]!.after.weekWin).toBeCloseTo(baseline.weekWin + moves[0]!.delta, 10);
     expect(moves.length).toBe(1); // the worse player is left unranked, not ranked last
@@ -102,7 +102,7 @@ describe("rankWaiverMoves", () => {
   });
   test("respects droppable", () => {
     const { moves } = rankWaiverMoves(roster, [good], env, { droppable: [roster[0]!] });
-    expect(moves[0]!.drop.name).toBe(roster[0]!.name);
+    expect(moves[0]!.drop!.name).toBe(roster[0]!.name);
   });
 });
 

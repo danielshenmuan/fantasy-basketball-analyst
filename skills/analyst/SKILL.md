@@ -1,6 +1,6 @@
 ---
 name: analyst
-description: Single entry point for fantasy basketball help. Use when the user says anything general about their fantasy basketball team, such as "check my team", "how am I doing", "this week's matchup", "will I win this week", "who should I pick up", "should I drop X", "is this trade good" or "set up my league", and has not named a specific skill. Reads the saved league card first, asks at most one question, and runs the right skill (setup, team-check, matchup, waiver or trade). Read-only.
+description: Single entry point for fantasy basketball help. Use when the user says anything general about their fantasy basketball team, such as "check my team", "how am I doing", "this week's matchup", "will I win this week", "who should I pick up", "should I drop X", "is this trade good" or "set up my league", and has not named a specific skill. Reads the saved league card first, asks at most one question, and runs the right skill (setup, team-check, matchup, waiver, trade or outlook). Read-only.
 ---
 
 # Fantasy basketball analyst: start here
@@ -28,6 +28,8 @@ Show the league in one line (name, host, categories or points scoring, teams) so
 | This week's opponent, "will I win", "who has more games", the score so far | `matchup` |
 | Free agents, "who should I pick up", "drop X", "stream a spot", "is Y worth adding" | `waiver` |
 | A trade offer, "does this trade help", "find me a trade with team Z" | `trade` |
+| "Will I make the playoffs", "what seed", "title odds", "rest of the season", "how many wins will I finish with" | `outlook` |
+| "What if X is out / back Thursday", "who do I start/bench today", "stream a spot for the rest of the week" | `matchup` (scenarios and daily options) |
 | Setting up or changing the league | `setup` |
 
 If the request fits two rows (for example "check my team and my matchup"), run both, matchup after team-check, and read the league only once. If it fits none, or is only "help", **the one question** is: "Do you want a team check, this week's matchup, a pickup, or a trade?" Do not ask it when the request already says which.
