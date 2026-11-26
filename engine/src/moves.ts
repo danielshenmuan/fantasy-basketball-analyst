@@ -98,7 +98,7 @@ export interface Move {
   delta: number;
   /** What dropping that player alone would do (nobody added; his lineup spot goes to the next player). */
   dropOnlyDelta: number;
-  /** delta minus dropOnlyDelta: what the added player contributes. Only moves where this is above zero are ranked. */
+  /** delta minus dropOnlyDelta: what the added player contributes. Only moves where this and `delta` are above zero are ranked. */
   addDelta: number;
   categoryDelta: Record<string, number>;
 }
@@ -177,6 +177,8 @@ export function rankWaiverMoves(
     const only = dropOnlyAt(drop, env.simWeeks, dropOnlyFull);
     const addDelta = after.weekWin - only;
     if (addDelta <= 0) { unranked.push({ add, reason: "no-gain-from-add", drop }); continue; }
+    // A move that lowers the weekly win chance is never recommended, whatever the add contributes (#27).
+    if (after.weekWin - baseline.weekWin <= 0) { unranked.push({ add, reason: "no-gain-from-add", drop }); continue; }
     moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: only - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline) });
   }
   moves.sort((a, b) => b.addDelta - a.addDelta);

@@ -106,6 +106,18 @@ describe("rankWaiverMoves", () => {
   });
 });
 
+describe("issue #27: a move that lowers the weekly win chance is never recommended", () => {
+  const star = entry("star", { pts: 26, reb: 9, ast: 6, blk: 1.5 }, 25);
+  const roster = [...lineup(9), star];
+  const mid = entry("mid", { pts: 17, reb: 6, ast: 3.5 }, 12); // beats the filler, but is worse than the star he would replace
+  test("add contributes more than the filler, but the net is a loss: not in moves", () => {
+    const { moves, unranked } = rankWaiverMoves(roster, [mid], env, { droppable: [star] });
+    expect(moves.every((m) => m.delta > 0)).toBe(true);
+    expect(moves.length).toBe(0);
+    expect(unranked.some((u) => u.add.name === "mid")).toBe(true);
+  });
+});
+
 describe("trades", () => {
   const mine = [...lineup(8, {}, "m"), entry("bigman", { pts: 10, reb: 11, blk: 2, fg_pct: 0.55, fgm: 6.05, ast: 1, fg3m: 0 }, 1), entry("guard", { pts: 22, reb: 3, ast: 8, fg3m: 3 }, 6)];
   const theirs = [...lineup(8, {}, "t"), entry("star", { pts: 32, reb: 12, ast: 10, fg3m: 4, stl: 2, blk: 2 }, 24), entry("wing", { pts: 9, reb: 3, ast: 2 }, -2)];

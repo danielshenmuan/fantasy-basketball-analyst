@@ -23,7 +23,7 @@ Read all three in one pass without asking for pasted text: follow `../analyst/re
 
 ## Add limit, open spots and the injured list
 
-- Send `waiver.adds_left` (adds still allowed this week, from the host or the league card minus adds made) and the league's `il_slots` and `il_eligible_statuses` in `league`. The result has `best_use_of_adds`: the best group of moves within the adds left, found by re-simulating the combined roster (never by adding up single moves). With `adds_left` 0 it says there is nothing to do this week. Tell the user when the ranked moves outnumber the adds.
+- Send `waiver.adds_left` (adds still allowed this week, from the host or the league card minus adds made) and the league's `il_slots` and `il_eligible_statuses` in `league`. The result has `best_use_of_adds`: the best group of moves within the adds left, found by re-simulating the combined roster (never by adding up single moves). With `adds_left` 0 it says there is nothing to do this week. A move that lowers the weekly win chance is never listed or picked; if no move helps, it says so. Tell the user when the ranked moves outnumber the adds.
 - A roster player whose host status is one the league lets into IL moves to an open IL slot, which frees his roster spot (`il_moves`, `open_spots`). While a spot is open an add needs no drop (`drop` is null in the move). Nothing is assumed when the league's IL rules were not sent.
 - `breaks-slot` in `not_ranked`: every drop that makes room for this player would leave a required lineup slot (named in `empty_slots`) with nobody eligible. Relay the explanation; he is never recommended.
 

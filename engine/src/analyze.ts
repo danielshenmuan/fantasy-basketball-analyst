@@ -781,8 +781,9 @@ export function waiverWith(input: AnalyzeInput, snapshot: Snapshot, st: MoveSetu
       let cur = roster, left = cands.slice(), spots = plan.openSpots;
       const picked: { add: Entry; drop: Entry | null }[] = [];
       for (let i = 0; i < Math.min(w.adds_left, 5); i++) {
-        const r = rankWaiverMoves(cur, left, { ...env, openSpots: spots }, { top: 1 });
-        const m = r.moves[0];
+        const r = rankWaiverMoves(cur, left, { ...env, openSpots: spots }, { top: 8 });
+        // Pick by the measured change in the weekly win chance (every listed move already raises it).
+        const m = r.moves.slice().sort((a, b) => b.delta - a.delta)[0];
         if (!m) break;
         picked.push({ add: m.add, drop: m.drop });
         cur = (m.drop ? cur.filter((p) => p.id !== m.drop!.id) : cur).concat(m.add);
@@ -790,10 +791,12 @@ export function waiverWith(input: AnalyzeInput, snapshot: Snapshot, st: MoveSetu
         left = left.filter((p) => p.id !== m.add.id);
       }
       const after = scoreRoster(cur, env);
+      const none = picked.length === 0 ? { note: "No add helps this week: every candidate move lowers or leaves unchanged your weekly win chance." } : {};
       bestUse = {
         adds_left: w.adds_left, moves: picked.map((p) => ({ add: p.add.name, drop: p.drop?.name ?? null })),
         week_win_pct: winPct(after.weekWin), delta_points: pct1(after.weekWin - base.weekWin),
-        ...(moves.length > w.adds_left ? { note: `You have ${w.adds_left} add(s) left and ${moves.length} ranked moves: this is the best group of moves within your adds, chosen by re-simulating the combined roster.` } : {}),
+        ...none,
+        ...(picked.length > 0 && moves.length > w.adds_left ? { note: `You have ${w.adds_left} add(s) left and ${moves.length} ranked moves: this is the best group of moves within your adds, chosen by re-simulating the combined roster.` } : {}),
       };
     }
   }

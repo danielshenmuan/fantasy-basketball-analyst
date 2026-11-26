@@ -1945,6 +1945,10 @@ function rankWaiverMoves(roster, candidates, env, opts = {}) {
       unranked.push({ add, reason: "no-gain-from-add", drop });
       continue;
     }
+    if (after.weekWin - baseline.weekWin <= 0) {
+      unranked.push({ add, reason: "no-gain-from-add", drop });
+      continue;
+    }
     moves.push({ add, drop, after, delta: after.weekWin - baseline.weekWin, dropOnlyDelta: only - baseline.weekWin, addDelta, categoryDelta: diff(after, baseline) });
   }
   moves.sort((a, b) => b.addDelta - a.addDelta);
@@ -2617,8 +2621,8 @@ function waiverWith(input, snapshot, st) {
       let cur = roster, left = cands.slice(), spots = plan.openSpots;
       const picked = [];
       for (let i = 0;i < Math.min(w.adds_left, 5); i++) {
-        const r = rankWaiverMoves(cur, left, { ...env, openSpots: spots }, { top: 1 });
-        const m = r.moves[0];
+        const r = rankWaiverMoves(cur, left, { ...env, openSpots: spots }, { top: 8 });
+        const m = r.moves.slice().sort((a, b) => b.delta - a.delta)[0];
         if (!m)
           break;
         picked.push({ add: m.add, drop: m.drop });
@@ -2628,12 +2632,14 @@ function waiverWith(input, snapshot, st) {
         left = left.filter((p) => p.id !== m.add.id);
       }
       const after = scoreRoster(cur, env);
+      const none = picked.length === 0 ? { note: "No add helps this week: every candidate move lowers or leaves unchanged your weekly win chance." } : {};
       bestUse = {
         adds_left: w.adds_left,
         moves: picked.map((p) => ({ add: p.add.name, drop: p.drop?.name ?? null })),
         week_win_pct: winPct(after.weekWin),
         delta_points: pct1(after.weekWin - base.weekWin),
-        ...moves.length > w.adds_left ? { note: `You have ${w.adds_left} add(s) left and ${moves.length} ranked moves: this is the best group of moves within your adds, chosen by re-simulating the combined roster.` } : {}
+        ...none,
+        ...picked.length > 0 && moves.length > w.adds_left ? { note: `You have ${w.adds_left} add(s) left and ${moves.length} ranked moves: this is the best group of moves within your adds, chosen by re-simulating the combined roster.` } : {}
       };
     }
   }
