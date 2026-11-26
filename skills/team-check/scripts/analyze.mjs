@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 var CATEGORIES = ["PTS", "REB", "AST", "STL", "BLK", "3PM", "FG%", "FT%", "TO"];
 
 // src/simulate.ts
+var RATE_CATEGORIES = [["FG%", "fgm", "fga"], ["FT%", "ftm", "fta"]];
 var DEFAULT_PICK_WEIGHTS = [0.45, 0.25, 0.15, 0.1, 0.05];
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -42,6 +43,7 @@ function simulateBenchmark(players, settings, opts = {}) {
     throw new Error(`simulateBenchmark: need ${poolSize} players, got ${pool.length}`);
   const rand = mulberry32(opts.seed ?? 1);
   const sums = Object.fromEntries(CATEGORIES.map((c) => [c, []]));
+  const ratesAsRates = pool.every((p) => p.shots !== undefined);
   for (let l = 0;l < leagues; l++) {
     const remaining = pool.slice();
     const team = Array.from({ length: teams }, () => []);
@@ -56,12 +58,27 @@ function simulateBenchmark(players, settings, opts = {}) {
       const lineup = t.sort((a, b) => b.total - a.total).slice(0, lineupSlots);
       for (const c of CATEGORIES)
         sums[c].push(lineup.reduce((s, p) => s + p.z[c], 0));
+      if (ratesAsRates)
+        for (const [c, made, att] of RATE_CATEGORIES) {
+          const a = lineup.reduce((s, p) => s + p.shots[att], 0);
+          sums[c][sums[c].length - 1] = a > 0 ? lineup.reduce((s, p) => s + p.shots[made], 0) / a : 0;
+        }
     }
   }
   for (const c of CATEGORIES)
     sums[c].sort((a, b) => a - b);
   const poolMean = Object.fromEntries(CATEGORIES.map((c) => [c, pool.reduce((t, p) => t + p.z[c], 0) / pool.length]));
-  return { settings, leagues, pickWeights: weights, lineupSlots, teamSums: sums, poolMean };
+  const mean = (k) => pool.reduce((t, p) => t + p.shots[k], 0) / pool.length;
+  return {
+    settings,
+    leagues,
+    pickWeights: weights,
+    lineupSlots,
+    teamSums: sums,
+    poolMean,
+    ratesAsRates,
+    ...ratesAsRates ? { poolMeanShots: { fgm: mean("fgm"), fga: mean("fga"), ftm: mean("ftm"), fta: mean("fta") } } : {}
+  };
 }
 
 // src/lineup.ts
@@ -1739,10 +1756,27 @@ function assessTeam(roster, baseline, benchmark, opts) {
   for (const x of actives.slice(0, spots))
     for (const c of CATEGORIES)
       sums[c] += x.z ? x.z[c] : benchmark.poolMean[c];
+  if (benchmark.ratesAsRates) {
+    const avg3 = benchmark.poolMeanShots;
+    const shots = (x) => x.est.averages ? { fgm: x.est.averages.fgm ?? x.est.averages.fga * x.est.averages.fg_pct, fga: x.est.averages.fga, ftm: x.est.averages.ftm ?? x.est.averages.fta * x.est.averages.ft_pct, fta: x.est.averages.fta } : avg3;
+    const lineup = actives.slice(0, spots).map(shots);
+    for (let i = 0;i < spots - lineup.length; i++)
+      lineup.push(avg3);
+    for (const [c, made, att] of RATE_CATEGORIES) {
+      const a = lineup.reduce((t, x) => t + x[att], 0);
+      sums[c] = a > 0 ? lineup.reduce((t, x) => t + x[made], 0) / a : 0;
+    }
+  }
   const empty = spots - Math.min(spots, actives.length);
-  for (let i = 0;i < empty; i++)
-    for (const c of CATEGORIES)
-      sums[c] += benchmark.poolMean[c];
+  if (!benchmark.ratesAsRates)
+    for (let i = 0;i < empty; i++)
+      for (const c of CATEGORIES)
+        sums[c] += benchmark.poolMean[c];
+  else
+    for (let i = 0;i < empty; i++)
+      for (const c of CATEGORIES)
+        if (c !== "FG%" && c !== "FT%")
+          sums[c] += benchmark.poolMean[c];
   if (empty > 0)
     assumptions.push(`${empty} empty lineup slot(s) counted as an average rostered player.`);
   const currentOnly = players.filter((p) => p.counted && rows.find((x) => x.r.name === p.name)?.est.currentSeasonOnly).length;
@@ -1751,7 +1785,7 @@ function assessTeam(roster, baseline, benchmark, opts) {
   const noData = players.filter((p) => p.counted && p.confidence === "none").length;
   if (noData > 0)
     assumptions.push(`${noData} player(s) with no NBA data counted as an average rostered player.`);
-  assumptions.push(`Players are estimated from their last three seasons, weighted by recency (${RECENCY_WEIGHTS.join(" / ")}) and games played (capped at ${GAMES_CAP} per season). Aging and role changes are not modelled.`, `Benchmark: ${benchmark.settings.teams} teams x ${benchmark.settings.rosterSpots} roster spots, ${benchmark.leagues} simulated snake drafts, each pick one of the best ${benchmark.pickWeights.length} remaining. Positions are ignored.`, `Season-long strength, not this week: only each team's best ${spots} players (by total score) are summed, the same lineup size the weekly matchup uses. No schedule, game counts or luck are included, so a category's band can differ from this week's matchup win chance, most when a heavy or light week of games or luck is involved.`, "Daily lineup limits are not modelled.", `Bands by percentile among simulated teams: elite >= ${cut.elite}, strong >= ${cut.strong}, neutral >= ${cut.neutral}, otherwise weak.`);
+  assumptions.push(`Players are estimated from their last three seasons, weighted by recency (${RECENCY_WEIGHTS.join(" / ")}) and games played (capped at ${GAMES_CAP} per season). Aging and role changes are not modelled.`, `Benchmark: ${benchmark.settings.teams} teams x ${benchmark.settings.rosterSpots} roster spots, ${benchmark.leagues} simulated snake drafts, each pick one of the best ${benchmark.pickWeights.length} remaining. Positions are ignored.`, `Season-long strength, not this week: only each team's best ${spots} players (by total score) are summed, the same lineup size the weekly matchup uses. No schedule, game counts or luck are included, so a category's band can differ from this week's matchup win chance, most when a heavy or light week of games or luck is involved.`, "Daily lineup limits are not modelled.", ...benchmark.ratesAsRates ? ["FG% and FT% are ranked by the team's rate (made / attempted over the counted lineup), the same footing the weekly matchup uses, not by a sum of per-player scores."] : [], `Bands by percentile among simulated teams: elite >= ${cut.elite}, strong >= ${cut.strong}, neutral >= ${cut.neutral}, otherwise weak.`);
   const categories = {};
   for (const c of CATEGORIES) {
     const b = benchmark.teamSums[c];
@@ -2126,7 +2160,13 @@ function analyze(input, snapshotIn) {
   const blendInfo = { reference_season: reference, current_season: w > 0 ? currentSeason : null, team_games: w > 0 ? teamGames : 0, weight_current: w };
   const sim = pool.map((p) => {
     const z = categoryZ(p.averages, baseline);
-    return { id: p.player_id, z, total: CATEGORIES.reduce((t, c) => t + z[c], 0) };
+    const a = p.averages;
+    return {
+      id: p.player_id,
+      z,
+      total: CATEGORIES.reduce((t, c) => t + z[c], 0),
+      shots: { fgm: a.fgm ?? a.fga * a.fg_pct, fga: a.fga, ftm: a.ftm ?? a.fta * a.ft_pct, fta: a.fta }
+    };
   });
   const lineupSlots = lineupSetting(input, input.matchup?.lineup_slots ?? input.waiver?.lineup_slots ?? input.trade?.lineup_slots).slots;
   const benchmark = simulateBenchmark(sim, { teams, rosterSpots: roster_spots }, { leagues: input.leagues ?? 500, seed: input.seed ?? 1, lineupSlots });

@@ -67,3 +67,48 @@ describe("assessTeam", () => {
     expect(a.engine_version).toBe("0.3.0");
   });
 });
+
+describe("FG% and FT% are ranked by the team's rate (issue #24)", () => {
+  const shotsOf = (p: PlayerSeason) => { const a = p.averages; return { fgm: a.fgm ?? a.fga * a.fg_pct, fga: a.fga, ftm: a.ftm ?? a.fta * a.ft_pct, fta: a.fta }; };
+  const simRate: SimPlayer[] = sim.map((s, i) => ({ ...s, shots: shotsOf(players[i]!) }));
+  const benchRate = simulateBenchmark(simRate, settings, { leagues: 300, seed: 11 });
+
+  test("without shots the old impact sum is used; with shots the benchmark holds rates", () => {
+    expect(bench.ratesAsRates).toBe(false);
+    expect(benchRate.ratesAsRates).toBe(true);
+    for (const c of ["FG%", "FT%"] as const) {
+      expect(benchRate.teamSums[c][0]!).toBeGreaterThan(0);
+      expect(benchRate.teamSums[c].at(-1)!).toBeLessThan(1);
+    }
+  });
+  test("the other seven categories are identical with or without shots", () => {
+    for (const c of CATEGORIES.filter((x) => x !== "FG%" && x !== "FT%")) expect(benchRate.teamSums[c]).toEqual(bench.teamSums[c]);
+  });
+  test("a team's FT% total is made / attempted over the counted lineup", () => {
+    const roster = top(13);
+    const a = assessTeam(roster, baseline, benchRate, { reference: REF });
+    const counted = a.players.filter((p) => p.counted).map((p) => players.find((x) => x.name === p.name)!);
+    const made = counted.reduce((t, p) => t + shotsOf(p).ftm, 0), att = counted.reduce((t, p) => t + shotsOf(p).fta, 0);
+    expect(a.categories["FT%"].total).toBeCloseTo(made / att, 10);
+    expect(a.categories["FT%"].total).toBeGreaterThan(0);
+    expect(a.categories["FT%"].total).toBeLessThan(1);
+  });
+  test("free-throw volume alone does not make a poor shooting team strong", () => {
+    // the 13 players with the most free-throw attempts, versus the 13 best free-throw shooters among players who take some
+    const byAtt = [...players].sort((a, b) => b.averages.fta - a.averages.fta).slice(0, 13);
+    const rate = (ps: PlayerSeason[]) => ps.reduce((t, p) => t + shotsOf(p).ftm, 0) / ps.reduce((t, p) => t + shotsOf(p).fta, 0);
+    const asRoster = (ps: PlayerSeason[]): RosterPlayer[] => ps.map((p) => ({ name: p.name, history: hist(p) }));
+    const a = assessTeam(asRoster(byAtt), baseline, benchRate, { reference: REF });
+    // percentile follows the rate: a team shooting below the simulated median rate is not above the 50th percentile
+    const median = benchRate.teamSums["FT%"][Math.floor(benchRate.teamSums["FT%"].length / 2)]!;
+    if (rate(byAtt) < median) expect(a.categories["FT%"].percentile).toBeLessThanOrEqual(50);
+    else expect(a.categories["FT%"].percentile).toBeGreaterThanOrEqual(50);
+  });
+  test("an empty roster is still near the middle in FG% and FT%", () => {
+    const a = assessTeam([], baseline, benchRate, { reference: REF });
+    for (const c of ["FG%", "FT%"] as const) {
+      expect(a.categories[c].percentile).toBeGreaterThan(25);
+      expect(a.categories[c].percentile).toBeLessThan(75);
+    }
+  });
+});

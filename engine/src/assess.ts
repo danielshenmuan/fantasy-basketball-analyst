@@ -1,6 +1,6 @@
 import { categoryZ } from "./fantasyValue";
 import { estimateAverages, GAMES_CAP, RECENCY_WEIGHTS } from "./history";
-import type { Benchmark } from "./simulate";
+import { RATE_CATEGORIES, type Benchmark } from "./simulate";
 import {
   CATEGORIES, type Band, type Category, type Confidence, type LeagueBaselines, type PlayerHistory,
 } from "./types";
@@ -44,7 +44,7 @@ export interface CategoryAssessment {
   total: number;
   percentile: number;
   band: Band;
-  /** What simulated teams look like in this category. */
+  /** FG% and FT%: the team's made / attempted (0 to 1), the same footing as the matchup. Other categories: the sum of category scores. */
   benchmark: { p15: number; median: number; p85: number };
 }
 export interface TeamAssessment {
@@ -96,8 +96,22 @@ export function assessTeam(
   });
   const sums = { ...zero };
   for (const x of actives.slice(0, spots)) for (const c of CATEGORIES) sums[c] += x.z ? x.z[c] : benchmark.poolMean[c];
+  if (benchmark.ratesAsRates) {
+    // FG% and FT% by the team's rate, made / attempted over the counted lineup (a missing player shoots like the average drafted player).
+    const avg = benchmark.poolMeanShots!;
+    const shots = (x: (typeof rows)[number]) => (x.est.averages
+      ? { fgm: x.est.averages.fgm ?? x.est.averages.fga * x.est.averages.fg_pct, fga: x.est.averages.fga, ftm: x.est.averages.ftm ?? x.est.averages.fta * x.est.averages.ft_pct, fta: x.est.averages.fta }
+      : avg);
+    const lineup = actives.slice(0, spots).map(shots);
+    for (let i = 0; i < spots - lineup.length; i++) lineup.push(avg);
+    for (const [c, made, att] of RATE_CATEGORIES) {
+      const a = lineup.reduce((t, x) => t + x[att], 0);
+      sums[c] = a > 0 ? lineup.reduce((t, x) => t + x[made], 0) / a : 0;
+    }
+  }
   const empty = spots - Math.min(spots, actives.length);
-  for (let i = 0; i < empty; i++) for (const c of CATEGORIES) sums[c] += benchmark.poolMean[c];
+  if (!benchmark.ratesAsRates) for (let i = 0; i < empty; i++) for (const c of CATEGORIES) sums[c] += benchmark.poolMean[c];
+  else for (let i = 0; i < empty; i++) for (const c of CATEGORIES) if (c !== "FG%" && c !== "FT%") sums[c] += benchmark.poolMean[c];
   if (empty > 0) assumptions.push(`${empty} empty lineup slot(s) counted as an average rostered player.`);
   const currentOnly = players.filter((p) => p.counted && rows.find((x) => x.r.name === p.name)?.est.currentSeasonOnly).length;
   if (currentOnly > 0) assumptions.push(`${currentOnly} player(s) with no completed NBA seasons are judged on this season only; small samples can swing.`);
@@ -108,6 +122,7 @@ export function assessTeam(
     `Benchmark: ${benchmark.settings.teams} teams x ${benchmark.settings.rosterSpots} roster spots, ${benchmark.leagues} simulated snake drafts, each pick one of the best ${benchmark.pickWeights.length} remaining. Positions are ignored.`,
     `Season-long strength, not this week: only each team's best ${spots} players (by total score) are summed, the same lineup size the weekly matchup uses. No schedule, game counts or luck are included, so a category's band can differ from this week's matchup win chance, most when a heavy or light week of games or luck is involved.`,
     "Daily lineup limits are not modelled.",
+    ...(benchmark.ratesAsRates ? ["FG% and FT% are ranked by the team's rate (made / attempted over the counted lineup), the same footing the weekly matchup uses, not by a sum of per-player scores."] : []),
     `Bands by percentile among simulated teams: elite >= ${cut.elite}, strong >= ${cut.strong}, neutral >= ${cut.neutral}, otherwise weak.`,
   );
   const categories = {} as Record<Category, CategoryAssessment>;

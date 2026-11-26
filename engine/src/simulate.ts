@@ -5,7 +5,15 @@ export interface SimPlayer {
   id: number | string;
   z: Record<Category, number>;
   total: number;
+  /**
+   * Made and attempted shots per game. When every player has them, FG% and FT% are ranked by the team's rate (made / attempted, the
+   * matchup's footing) instead of by the sum of attempt-weighted impact scores (issue #24).
+   */
+  shots?: Shots;
 }
+export interface Shots { fgm: number; fga: number; ftm: number; fta: number }
+/** The two rate categories and the shots behind each. */
+export const RATE_CATEGORIES = [["FG%", "fgm", "fga"], ["FT%", "ftm", "fta"]] as const;
 export interface SimOptions {
   /** Number of simulated leagues. */
   leagues?: number;
@@ -28,6 +36,10 @@ export interface Benchmark {
   teamSums: Record<Category, number[]>;
   /** The average drafted player's score in each category: what an unknown or missing player is assumed to be. */
   poolMean: Record<Category, number>;
+  /** True when teamSums for FG% and FT% are team rates (made / attempted), not sums of impact scores. */
+  ratesAsRates: boolean;
+  /** The average drafted player's made and attempted shots per game (what an unknown or missing player is assumed to shoot). Set with ratesAsRates. */
+  poolMeanShots?: Shots;
 }
 
 /** Small seedable PRNG so a benchmark is reproducible. */
@@ -69,6 +81,7 @@ export function simulateBenchmark(players: SimPlayer[], settings: LeagueSettings
   if (pool.length < poolSize) throw new Error(`simulateBenchmark: need ${poolSize} players, got ${pool.length}`);
   const rand = mulberry32(opts.seed ?? 1);
   const sums = Object.fromEntries(CATEGORIES.map((c) => [c, [] as number[]])) as Record<Category, number[]>;
+  const ratesAsRates = pool.every((p) => p.shots !== undefined);
   for (let l = 0; l < leagues; l++) {
     const remaining = pool.slice();
     const team: SimPlayer[][] = Array.from({ length: teams }, () => []);
@@ -83,9 +96,17 @@ export function simulateBenchmark(players: SimPlayer[], settings: LeagueSettings
     for (const t of team) {
       const lineup = t.sort((a, b) => b.total - a.total).slice(0, lineupSlots);
       for (const c of CATEGORIES) sums[c].push(lineup.reduce((s, p) => s + p.z[c], 0));
+      if (ratesAsRates) for (const [c, made, att] of RATE_CATEGORIES) {
+        const a = lineup.reduce((s, p) => s + p.shots![att], 0);
+        sums[c][sums[c].length - 1] = a > 0 ? lineup.reduce((s, p) => s + p.shots![made], 0) / a : 0;
+      }
     }
   }
   for (const c of CATEGORIES) sums[c].sort((a, b) => a - b);
   const poolMean = Object.fromEntries(CATEGORIES.map((c) => [c, pool.reduce((t, p) => t + p.z[c], 0) / pool.length])) as Record<Category, number>;
-  return { settings, leagues, pickWeights: weights, lineupSlots, teamSums: sums, poolMean };
+  const mean = (k: keyof Shots) => pool.reduce((t, p) => t + p.shots![k], 0) / pool.length;
+  return {
+    settings, leagues, pickWeights: weights, lineupSlots, teamSums: sums, poolMean, ratesAsRates,
+    ...(ratesAsRates ? { poolMeanShots: { fgm: mean("fgm"), fga: mean("fga"), ftm: mean("ftm"), fta: mean("fta") } } : {}),
+  };
 }
